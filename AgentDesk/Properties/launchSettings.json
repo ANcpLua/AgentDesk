@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "AgentDesk": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "applicationUrl": "http://127.0.0.1:5137",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      }
+    }
+  }
+}

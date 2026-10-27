@@ -1,0 +1,10 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "question-inbox": {
+      "type": "stdio",
+      "command": "/bin/sh",
+      "args": ["/Users/alexandernachtmann/RiderProjects/AgentDesk/scripts/start-mcp.sh"]
+    }
+  }
+}

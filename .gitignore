@@ -1,0 +1,11 @@
+**/bin/
+**/obj/
+node_modules/
+.local/
+**/__pycache__/
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
+
+inspectcode.sarif

@@ -1,0 +1,18 @@
+{
+  "name": "agentdesk",
+  "private": true,
+  "version": "0.3.0",
+  "type": "module",
+  "scripts": {
+    "build:ui": "tsc --noEmit && esbuild ui/inbox.ts --bundle --format=iife --target=es2022 --minify --outfile=AgentDesk/wwwroot/inbox.js",
+    "test": "dotnet test --solution AgentDesk.slnx --report-trx --report-trx-filename AgentDesk.Tests.trx --results-directory .local/test-results && python3 -m unittest discover -s tests -v && node --test tests/inbox-ui.test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "2.0.3"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "jsdom": "30.1.3",
+    "typescript": "7.0.2"
+  }
+}

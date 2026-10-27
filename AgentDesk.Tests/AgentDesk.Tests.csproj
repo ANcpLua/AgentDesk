@@ -1,0 +1,17 @@
+<Project Sdk="MSTest.Sdk/4.5.1">
+
+    <PropertyGroup>
+        <TargetFramework>net11.0</TargetFramework>
+        <LangVersion>15</LangVersion>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <TestingExtensionsProfile>AllMicrosoft</TestingExtensionsProfile>
+        <GenerateTestingPlatformEntryPoint>false</GenerateTestingPlatformEntryPoint>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="../AgentDesk/AgentDesk.csproj" />
+        <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.11.0" />
+    </ItemGroup>
+
+</Project>

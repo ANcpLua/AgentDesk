@@ -1,0 +1,61 @@
+@baseUrl = http://127.0.0.1:5137
+
+### Create a v0.3 question
+POST {{baseUrl}}/api/questions/
+Content-Type: application/json
+X-Question-Inbox: 1
+
+{"prompt":"Wie soll es weitergehen?","choices":[{"label":"Einzeltest","impact":"Wenig Aufwand"}],"project":"AgentDesk","requestKey":"manual-v3-question-1"}
+
+### Inbox and live snapshots
+GET {{baseUrl}}/api/questions/
+
+### Single question
+GET {{baseUrl}}/api/questions/replace-with-question-id
+
+### Answer (replace id/version)
+POST {{baseUrl}}/api/questions/replace-with-question-id/answer
+Content-Type: application/json
+X-Question-Inbox: 1
+
+{"expectedVersion":1,"decision":{"kind":"answer","text":"Einzeltest"}}
+
+### Streaming snapshots
+GET {{baseUrl}}/api/questions/stream
+Accept: text/event-stream
+
+### Existing native threads
+GET {{baseUrl}}/api/codex/threads
+
+### Native detail (replace UUID)
+GET {{baseUrl}}/api/codex/threads/replace-with-thread-uuid
+
+### Explicit operator message (sends real work after replacing UUID)
+POST {{baseUrl}}/api/codex/dispatch
+Content-Type: application/json
+X-Question-Inbox: 1
+
+{"requestKey":"manual-v3-dispatch-1","threadIds":["replace-with-thread-uuid"],"content":{"kind":"message","text":"Fasse deinen Stand kurz zusammen."}}
+
+### Delivery receipts
+GET {{baseUrl}}/api/codex/dispatch
+
+### Operator task
+POST {{baseUrl}}/api/work-items/
+Content-Type: application/json
+X-Question-Inbox: 1
+
+{"title":"Antwort prüfen","workspacePath":"/Users/alexandernachtmann/RiderProjects/AgentDesk","owner":{"kind":"operator"}}
+
+### Work list
+GET {{baseUrl}}/api/work-items/
+
+### Single task
+GET {{baseUrl}}/api/work-items/replace-with-task-id
+
+### Complete a task with evidence
+PUT {{baseUrl}}/api/work-items/replace-with-task-id
+Content-Type: application/json
+X-Question-Inbox: 1
+
+{"expectedVersion":1,"state":{"kind":"done","evidence":"Antwort im richtigen Thread geprüft."}}

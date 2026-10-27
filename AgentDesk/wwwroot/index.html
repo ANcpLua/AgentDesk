@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>AgentDesk</title>
+  <link rel="stylesheet" href="/inbox.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="#"><span class="brand-icon">?</span> AgentDesk</a>
+      <div class="sidebar-label">DEIN ARBEITSPLATZ</div>
+      <nav aria-label="Fragen filtern">
+        <button class="nav-item active" data-filter="pending"><span>Offen</span><b id="pending-count">0</b></button>
+        <button class="nav-item" data-filter="answered"><span>Beantwortet</span><b id="answered-count">0</b></button>
+        <button class="nav-item" data-filter="all"><span>Verlauf</span><b id="all-count">0</b></button>
+        <div class="nav-divider"></div>
+        <button class="nav-item" data-view="agents"><span>Codex-Threads</span><span>↗</span></button>
+        <button class="nav-item" data-view="work"><span>Gemeinsame Aufgaben</span><span>☷</span></button>
+      </nav>
+      <label class="sidebar-label" for="project">PROJEKT</label>
+      <select id="project"><option value="">Alle Projekte</option></select>
+      <div class="sidebar-bottom"><span class="live-dot"></span><span id="connection">Verbinde …</span></div>
+    </aside>
+    <main>
+      <header><div><p class="eyebrow">IN DEINEM TEMPO</p><h1 id="heading">Offene Fragen</h1>
+        <p class="intro">Deine Antworten warten auf dich. Nicht umgekehrt.</p></div>
+        <button id="new-question" class="button secondary">+ Testfrage</button></header>
+      <div class="notice"><span>↳</span><p>Du kannst weiterarbeiten und später antworten. Fragen bleiben auch nach dem Ende eines Chats erhalten.</p></div>
+      <div id="error" role="alert" hidden></div>
+      <section id="questions" aria-label="Fragen"></section>
+      <section id="control-center" aria-label="Codex und Aufgaben" hidden></section>
+      <footer>Speichern bleibt lokal. Erst „An Codex senden“ übergibt eine Nachricht an die ausgewählten Threads.</footer>
+    </main>
+  </div>
+  <dialog id="create-dialog">
+    <form id="create-form">
+      <div class="dialog-heading"><h2>Eine Testfrage stellen</h2><button type="button" id="close-dialog" class="icon-button" aria-label="Schließen">×</button></div>
+      <p>Probiere den Ablauf aus, bevor dein Agent die erste Frage stellt.</p>
+      <label for="prompt">Frage</label><textarea id="prompt" required maxlength="4000" placeholder="Wie sollen wir weitermachen?"></textarea>
+      <label for="new-project">Projekt</label><input id="new-project" maxlength="200" value="AgentDesk" required>
+      <label for="origin-thread">Ursprungs-Thread <span class="muted">optional, verifiziert den Projektpfad</span></label>
+      <select id="origin-thread"><option value="">Ohne Thread-Zuordnung</option></select>
+      <label for="options">Antwortmöglichkeiten <span class="muted">eine pro Zeile, optional</span></label>
+      <textarea id="options" rows="3" placeholder="Mit dem Vorschlag fortfahren&#10;Noch einmal überarbeiten"></textarea>
+      <label class="checkbox"><input type="checkbox" id="blocking"> Für den nächsten Schritt wird eine Antwort benötigt</label>
+      <p id="create-error" role="alert"></p>
+      <button class="button primary" type="submit">Frage speichern</button>
+    </form>
+  </dialog>
+  <dialog id="dispatch-dialog">
+    <form id="dispatch-form">
+      <div class="dialog-heading"><h2>An Codex senden</h2><button type="button" id="close-dispatch" class="icon-button" aria-label="Schließen">×</button></div>
+      <p>Jeder ausgewählte Thread erhält eine eigene Nachricht über <code>codex queue</code>. Sein bestehender Verlauf bleibt erhalten.</p>
+      <div id="dispatch-preview" class="answer" hidden></div>
+      <label for="dispatch-message">Nachricht / Ergänzung</label><textarea id="dispatch-message" maxlength="12000" rows="4" placeholder="Was sollen die ausgewählten Agenten tun?"></textarea>
+      <label>Empfänger <span class="muted">maximal 8 konkrete Threads</span></label>
+      <div id="dispatch-targets" class="recipient-list"></div>
+      <p id="dispatch-error" role="alert"></p>
+      <button type="submit" class="button primary" id="dispatch-submit">An ausgewählte Threads senden</button>
+    </form>
+  </dialog>
+  <dialog id="work-dialog">
+    <form id="work-form">
+      <div class="dialog-heading"><h2>Gemeinsame Aufgabe</h2><button type="button" id="close-work" class="icon-button" aria-label="Schließen">×</button></div>
+      <label for="work-title">Nächster konkreter Schritt</label><input id="work-title" required maxlength="300">
+      <label for="work-objective">Ziel / Woran erkennen wir Erfolg?</label><textarea id="work-objective" maxlength="4000"></textarea>
+      <label for="work-path">Projektpfad</label><input id="work-path" required placeholder="/Users/…/Projekt">
+      <label for="work-owner">Verantwortlich</label><select id="work-owner"><option value="operator">Ich · Operator</option><option value="agent">Ein Codex-Thread</option></select>
+      <label for="work-thread">Agent-Thread</label><select id="work-thread"><option value="">Thread wählen</option></select>
+      <p id="work-error" role="alert"></p><button type="submit" class="button primary">Aufgabe festhalten</button>
+    </form>
+  </dialog>
+  <script src="/inbox.js" defer></script>
+</body>
+</html>

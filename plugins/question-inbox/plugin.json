@@ -1,0 +1,20 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "question-inbox",
+  "version": "0.3.0",
+  "description": "Persistent local human questions and answers for ChatGPT and Codex.",
+  "author": { "name": "Alexander Nachtmann" },
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "AgentDesk",
+        "shortDescription": "Fragen in deinem Tempo",
+        "longDescription": "Lokales AgentDesk mit Auswahlantworten, Freitext und dauerhaftem Verlauf. Der Agent kann unabhängig weiterarbeiten.",
+        "developerName": "Alexander Nachtmann",
+        "category": "Productivity",
+        "capabilities": ["Interactive"],
+        "defaultPrompt": "Öffne mein AgentDesk und zeige mir die noch offenen Fragen."
+      }
+    }
+  }
+}
