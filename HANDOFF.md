@@ -8,7 +8,10 @@ SQLite location retain `question-inbox` / `QuestionInbox` for compatibility.
 Start with `AGENTS.md`, the project integration skill and `README.md`.
 Read `docs/architecture-direction.md` for the agreed next stage: retain the C#
 MCP/domain host and SQLite, add a React frontend and a separate DuckDB analysis
-projection. These additions are planned, not implemented. The document records
+projection. React and DuckDB are planned, not implemented. A native SwiftUI
+menu-bar controller is implemented in `macos/AgentDeskMenu.swift`; install it
+with `scripts/install-menubar.sh`. It controls the existing managed backend
+without embedding or replacing it. The document records
 the locally checked MCP feature flags and the limits on session imports.
 General skills are owned by the existing `nami-plugin` marketplace. Do not copy
 those skills back into this project. The broad cross-repository dedup inventory

@@ -26,12 +26,17 @@ Benutzervorlieben, Berechtigungen oder Änderungen an der Anwendung.
 | ChatGPT-Ansicht | MCP Apps; Apps SDK UI als Komponentenbasis | MCP-App vorhanden; React-Umbau geplant |
 | Persönliche Gestaltung | Geeignete React Bits Pro App-UI-/Agent-Komponenten | Geplant |
 | Sitzungsanalyse | DuckDB als rekonstruierbare Analyse-Datenbank | Geplant |
-| macOS-Integration | Bei konkretem Bedarf eine dünne SwiftUI-Hülle | Optional |
+| macOS-Integration | Dünne SwiftUI-Menüleisten-App für Öffnen, Start und Stop | Vorhanden |
 
 Der in Go geschriebene TypeScript-Compiler ist kein Grund, das Backend in Go
 umzuschreiben. Auch Rust, MAUI oder Aspire sind keine Voraussetzung für diese
 Ausbaustufe. Aspire bleibt eine mögliche Hilfe für Entwicklung und Diagnose.
 Die MCP-Server-Sprache ist unabhängig von der Sprache der Oberfläche.
+
+Die native Steuerung liegt unter `macos/AgentDeskMenu.swift`. Sie öffnet die
+Weboberfläche, steuert den bestehenden Backend-Dienst und zeigt dessen Health-
+Status. Sie ersetzt weder den Web-Client noch den C#-Kern. Installation und
+Lebenszyklus sind im README beschrieben.
 
 ## Zustand und Seiteneffekte
 

@@ -64,3 +64,9 @@ PATH="/usr/local/share/dotnet:$PATH" jb inspectcode AgentDesk.slnx --output=insp
 The per-user launchd service is `local.agentdesk`. `install-service.sh` updates it;
 `uninstall-service.sh` removes its registration. The database lives outside the
 checkout and is retained. See README for the single MCP connection to the app.
+
+`macos/AgentDeskMenu.swift` is a native controller, installed through
+`scripts/install-menubar.sh` into `~/Applications/AgentDesk.app`. It reuses the
+existing lifecycle scripts and verifies the backend through `/health`. Never
+kill an unrelated process just because it holds port 5137. The controller's
+optional login item is separate from the backend launchd registration.

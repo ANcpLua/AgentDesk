@@ -54,6 +54,37 @@ Der Compiler-Test lässt eine temporäre Projektkopie absichtlich an CS8509 sche
 
 ## Lokal betreiben
 
+### macOS-Menüleiste
+
+Die native SwiftUI-Steuerung liegt nach der Installation unter
+`~/Applications/AgentDesk.app`. Das Postfach-Symbol in der Menüleiste bietet
+**AgentDesk öffnen**, **Server starten**, **Server stoppen**, Logs und
+**AgentDesk vollständig beenden**. Beim Öffnen der App erscheint zusätzlich ein
+kleines Steuerfenster; nach dessen Schließen bleibt die Menüleiste verfügbar.
+
+```sh
+./scripts/install-menubar.sh
+```
+
+Zum Bauen werden macOS 15+ und die Xcode Command Line Tools mit Swift 6 benötigt.
+Die Installation baut nur die native Steuerung; die veröffentlichte .NET-App
+muss bereits über `scripts/build.sh` vorhanden sein. Der Installer erzeugt und
+signiert lokal ein App-Bundle, hinterlegt den aktuellen Projektpfad und startet
+es. Nach dem Verschieben des Repositorys den Installer erneut ausführen.
+
+**Menüleisten-App beenden** lässt den Server weiterlaufen. **AgentDesk vollständig
+beenden** stoppt zusätzlich den verwalteten Server. Fragen und Aufgaben bleiben
+erhalten. Läuft ein Server außerhalb unserer Steuerung, etwa direkt in Rider,
+wird er nicht anhand seiner Portnummer beendet; die App zeigt einen Hinweis.
+
+**Menüleiste bei Anmeldung starten** verwendet Apples ServiceManagement und
+betrifft die native Steuerung. Der vorhandene Backend-Login-Dienst hat einen
+eigenen Lebenszyklus: **Server stoppen** stoppt ihn für die aktuelle Anmeldung;
+`uninstall-service.sh` entfernt seine Anmeldung dauerhaft. Die Installation der
+Menüleisten-App ändert diese Autostart-Einstellungen nicht.
+
+### Backend-Dienst
+
 ```sh
 ./scripts/build.sh
 ./scripts/install-service.sh
