@@ -10,6 +10,9 @@ interface Thread {
 interface Delivery { id: string; batchId: string; threadId: string; threadName: string; workspacePath: string; message: string; state: DeliveryState; createdAt: string }
 interface Work { id: string; title: string; objective: string | null; workspacePath: string; owner: WorkOwner; questionId: string | null; state: WorkState; version: number }
 interface Detail { thread: Thread; goal: string | null; goalStatus: string | null; latestTurnId: string | null; latestTurnStatus: string | null; latestReply: string | null }
+interface UsageWindow { usedPercent: number; windowDurationMins: number | null; resetsAt: number | null }
+interface UsageBucket { limitId: string | null; limitName: string | null; primary: UsageWindow | null; secondary: UsageWindow | null; credits: { hasCredits: boolean; unlimited: boolean; balance: string | null } | null }
+interface Usage { ordinaryUsageAllowed: boolean | null; rateLimits: UsageBucket | null; rateLimitsByLimitId: Record<string, UsageBucket> | null }
 type DispatchQuestion = Question;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const el = <T extends keyof HTMLElementTagNameMap>(tag: T, className = '', text?: string) => { const n = document.createElement(tag); n.className = className; if (text !== undefined) n.textContent = text; return n; };
@@ -39,11 +42,40 @@ export function startControlCenter(api: Api, report: (error: unknown) => void) {
     $('new-question').hidden = view !== 'questions';
     if (view === 'questions') return;
     document.querySelectorAll('[data-filter]').forEach(n => n.classList.remove('active'));
-    $('heading').textContent = view === 'agents' ? 'Deine Codex-Threads' : 'Gemeinsam weiterkommen';
+    $('heading').textContent = view === 'agents' ? 'Deine Codex-Threads' : view === 'usage' ? 'Codex-Nutzung' : 'Gemeinsam weiterkommen';
     document.querySelector('.intro')!.textContent = view === 'agents'
       ? 'Bestehende Threads gezielt erreichen. Eine Nachricht, mehrere Empfänger.'
-      : 'Nächste Schritte, Zuständigkeiten und Ergebnisse bleiben nachvollziehbar.';
-    if (view === 'agents') void loadThreads().catch(report); else void renderWork().catch(report);
+      : view === 'usage' ? 'Aktuelle Kontingente deines Codex-Kontos.' : 'Nächste Schritte, Zuständigkeiten und Ergebnisse bleiben nachvollziehbar.';
+    if (view === 'agents') void loadThreads().catch(report); else if (view === 'usage') void renderUsage().catch(report); else void renderWork().catch(report);
+  }
+
+  async function renderUsage() {
+    center.replaceChildren(el('p', 'muted', 'Nutzung wird geladen …'));
+    const usage = await api<Usage>('read_codex_usage');
+    if (view !== 'usage') return;
+    center.replaceChildren();
+    const refresh = el('button', 'button secondary', 'Aktualisieren');
+    refresh.onclick = () => void renderUsage().catch(report);
+    center.append(refresh);
+    const buckets = Object.entries(usage.rateLimitsByLimitId ?? {});
+    if (!buckets.length && usage.rateLimits) buckets.push([usage.rateLimits.limitId ?? 'Codex', usage.rateLimits]);
+    if (!buckets.length) center.append(el('p', 'muted', 'Keine Nutzungsdaten verfügbar.'));
+    for (const [key, bucket] of buckets) {
+      const card = el('article', 'work-card');
+      card.append(el('h2', '', bucket.limitName ?? bucket.limitId ?? key));
+      for (const [label, window] of [['Primär', bucket.primary], ['Sekundär', bucket.secondary]] as const) {
+        if (!window) continue;
+        const remaining = Math.max(0, Math.min(100, 100 - window.usedPercent));
+        card.append(el('p', '', `${label}: ${remaining.toLocaleString('de-AT')} % verbleibend`));
+        if (window.windowDurationMins != null) card.append(el('p', 'muted compact', `Zeitraum: ${window.windowDurationMins} Minuten`));
+        if (window.resetsAt != null) card.append(el('p', 'muted compact', `Zurücksetzung: ${new Date(window.resetsAt * 1000).toLocaleString('de-AT')}`));
+      }
+      if (!bucket.primary && !bucket.secondary) card.append(el('p', 'muted', 'Kein Kontingent verfügbar.'));
+      if (bucket.credits?.unlimited) card.append(el('p', 'muted compact', 'Credits: unbegrenzt'));
+      else if (bucket.credits?.balance != null) card.append(el('p', 'muted compact', `Credits: ${bucket.credits.balance}`));
+      center.append(card);
+    }
+    if (usage.ordinaryUsageAllowed === false) center.append(el('p', 'muted', 'Die enthaltene Nutzung ist derzeit nicht verfügbar.'));
   }
 
   async function loadThreads(append = false) {

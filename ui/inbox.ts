@@ -24,8 +24,9 @@ function clearError() { $('error').hidden = true; }
 async function call<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
   if (host) {
     const result = await host.callServerTool({ name, arguments: args });
-    const data = result.structuredContent ?? JSON.parse((result.content?.find(c => c.type === 'text') as { text: string })?.text ?? '{}');
-    if (result.isError) throw new Error((data as { error?: string }).error ?? 'Die Anfrage ist fehlgeschlagen.');
+    const message = (result.content?.find(c => c.type === 'text') as { text: string } | undefined)?.text;
+    if (result.isError) throw new Error(message ?? 'Die Anfrage ist fehlgeschlagen.');
+    const data = result.structuredContent ?? JSON.parse(message ?? '{}');
     return data as T;
   }
   let path = '/api/questions/'; let method = 'GET'; let body: unknown;
@@ -42,6 +43,7 @@ async function call<T>(name: string, args: Record<string, unknown> = {}): Promis
     path = '/api/codex/threads?' + params;
   }
   if (name === 'read_codex_thread') path = '/api/codex/threads/' + encodeURIComponent(String(args.threadId));
+  if (name === 'read_codex_usage') path = '/api/codex/usage';
   if (name === 'dispatch_to_codex') { path = '/api/codex/dispatch'; method = 'POST'; body = args; }
   if (name === 'list_dispatches') path = '/api/codex/dispatch';
   if (name === 'list_work_items') path = '/api/work-items/' + (args.workspacePath ? '?workspacePath=' + encodeURIComponent(String(args.workspacePath)) : '');

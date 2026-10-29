@@ -102,6 +102,11 @@ print(f'Queued message {uuid.uuid4()} for thread {thread}.')
     def response(self, method, args):
         if method == 'initialize':
             return {'userAgent': 'fake-codex'}
+        if method == 'account/rateLimits/read':
+            return {'ordinaryUsageAllowed': True, 'rateLimits': {'limitId': 'codex', 'limitName': None,
+                'primary': {'usedPercent': 25, 'windowDurationMins': 10080, 'resetsAt': 1793779482},
+                'secondary': None, 'credits': {'hasCredits': True, 'unlimited': False, 'balance': '12.5'}},
+                'rateLimitsByLimitId': None}
         if method == 'thread/list':
             items = [thread_info(THREAD_A), thread_info(THREAD_B)]
             if args.get('cwd') and args['cwd'] != WORKSPACE:

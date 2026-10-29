@@ -280,6 +280,16 @@ class InboxAcceptanceTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertIn(b'question-inbox', response.read())
 
+    def test_codex_usage_reads_current_snapshot_from_native_server(self):
+        status, usage = self.request('GET', '/api/codex/usage')
+        self.assertEqual(status, 200, usage)
+        self.assertTrue(usage['ordinaryUsageAllowed'])
+        self.assertEqual(usage['rateLimits']['primary']['usedPercent'], 25)
+        self.assertEqual(usage['rateLimits']['primary']['resetsAt'], 1793779482)
+        self.assertIsNone(usage['rateLimitsByLimitId'])
+        self.assertIsNone(usage['rateLimits']['secondary'])
+        self.assertEqual(usage['rateLimits']['credits']['balance'], '12.5')
+
     def test_codex_list_and_detail_preserve_identity_without_full_history(self):
         status, page = self.request('GET', '/api/codex/threads')
         self.assertEqual(status, 200, page)

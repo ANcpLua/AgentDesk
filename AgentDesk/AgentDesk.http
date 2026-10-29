@@ -59,3 +59,5 @@ Content-Type: application/json
 X-Question-Inbox: 1
 
 {"expectedVersion":1,"state":{"kind":"done","evidence":"Antwort im richtigen Thread geprüft."}}
+### Current Codex account usage
+GET http://localhost:5137/api/codex/usage

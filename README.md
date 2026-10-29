@@ -11,6 +11,9 @@ bestehende Thread-IDs. Kein Modell-API-Aufruf, kein OpenAI-/Azure-Key erforderli
 - **Fragen:** Auswahl oder Freitext, Ziele, eingeschätzte Auswirkungen und Folgeprompts.
 - **Codex-Threads:** native Metadaten, konkrete IDs, Projektpfade, Status und letzte
   begrenzte Zusammenfassung. 1–8 Empfänger auswählen und eine Nachricht senden.
+- **Codex-Nutzung:** aktuelle verbleibende Kontingente und gemeldete Zurücksetzungszeiten
+  pro Konto. Die Ansicht liest bei Aufruf oder Aktualisierung den laufenden lokalen
+  Codex App Server; sie benötigt keinen Agenten- oder Modellaufruf und führt keinen Reset aus.
 - **Gemeinsame Aufgaben:** Operator oder konkreter Agent-Thread als Verantwortlicher;
   offene, laufende, blockierte und abgeschlossene Aufgaben mit Ergebnisnachweis.
 - **Antwort an Codex senden:** Antwort prüfen, Empfänger wählen und bewusst absenden.

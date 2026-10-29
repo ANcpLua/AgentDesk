@@ -86,6 +86,7 @@ public sealed class TimeProviderTests(TestContext context)
 
     private sealed class StubCodex : ICodexClient
     {
+        public Task<CodexUsage> UsageAsync(CancellationToken ct) => throw new NotSupportedException();
         public Task<CodexThreadPage> ListAsync(string? workspacePath, string? cursor, CancellationToken ct) => throw new NotSupportedException();
         public Task<CodexThread> GetAsync(string threadId, CancellationToken ct) => Task.FromResult(new CodexThread(
             threadId, threadId, "Test agent", "/project", "idle", [], null, null, null, null, null, "test", null, Start));
@@ -95,6 +96,7 @@ public sealed class TimeProviderTests(TestContext context)
 
     private sealed class NoCodex : ICodexClient
     {
+        public Task<CodexUsage> UsageAsync(CancellationToken ct) => throw new NotSupportedException();
         public Task<CodexThreadPage> ListAsync(string? workspacePath, string? cursor, CancellationToken ct) => throw new NotSupportedException();
         public Task<CodexThread> GetAsync(string threadId, CancellationToken ct) => throw new NotSupportedException();
         public Task<CodexThreadDetail> DetailAsync(string threadId, CancellationToken ct) => throw new NotSupportedException();

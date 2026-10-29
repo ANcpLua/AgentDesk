@@ -13,6 +13,10 @@ namespace AgentDesk.Mcp;
 public sealed class WorkspaceTools(ICodexClient codex, IWorkspaceService workspace)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    [McpServerTool(Name = "read_codex_usage", ReadOnly = true, OpenWorld = false)]
+    [Description("Read current account-wide Codex usage and reset times. Unavailable fields are not zero.")]
+    public Task<CallToolResult> Usage(CancellationToken cancellationToken = default) =>
+        Result(async () => await codex.UsageAsync(cancellationToken));
     [McpServerTool(Name = "list_codex_threads", ReadOnly = true, OpenWorld = false)]
     [Description("Read a bounded page of existing native Codex threads with verified IDs, project paths and runtime status. Does not resume threads or load full conversations.")]
     public Task<CallToolResult> Threads(string? workspacePath = null, string? cursor = null, CancellationToken cancellationToken = default) =>

@@ -7,6 +7,9 @@ public static class WorkspaceEndpoints
     public static void MapWorkspace(this WebApplication app)
     {
         var codex = app.MapGroup("/api/codex").WithTags("Codex");
+        codex.MapGet("/usage", async (ICodexClient client, CancellationToken ct) =>
+            TypedResults.Ok(await client.UsageAsync(ct)))
+            .WithName("ReadCodexUsage").WithSummary("Read current account usage from the Codex app server.");
         codex.MapGet("/threads", async (string? workspacePath, string? cursor, ICodexClient client, CancellationToken ct) =>
             TypedResults.Ok(await client.ListAsync(workspacePath, cursor, ct)))
             .WithName("ListCodexThreads").WithSummary("Read a bounded page from the native Codex agent list.");

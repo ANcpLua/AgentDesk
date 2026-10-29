@@ -15,6 +15,19 @@ const threadA = { id: '11111111-1111-4111-8111-111111111111', name: 'Agent A', s
 const threadB = { ...threadA, id: '22222222-2222-4222-8222-222222222222', name: 'Agent B', status: 'active' };
 const flush = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)); };
 
+test('usage view reads and refreshes the remaining allowance', async t => {
+  const app = await setup(t);
+  app.document.querySelector('[data-view=usage]').click();
+  await flush();
+  const center = app.document.querySelector('#control-center');
+  assert.match(center.textContent, /75 % verbleibend/);
+  assert.match(center.textContent, /Credits: 12\.5/);
+  assert.match(center.textContent, /Zurücksetzung:/);
+  center.querySelector('button').click();
+  await flush();
+  assert.equal(app.requests.filter(r => r.path === '/api/codex/usage').length, 2);
+});
+
 async function setup(t, questions = [initialQuestion()]) {
   let snapshot = { revision: 1, questions };
   let stream;
@@ -36,7 +49,7 @@ async function setup(t, questions = [initialQuestion()]) {
     const method = options.method ?? 'GET';
     const supported = method === 'GET' && (
       path.startsWith('/api/questions/?') || path === '/api/questions/' ||
-      (path.startsWith('/api/codex/threads?') || /^\/api\/codex\/threads\/[^/]+$/.test(path)) || path === '/api/codex/dispatch' ||
+      (path.startsWith('/api/codex/threads?') || /^\/api\/codex\/threads\/[^/]+$/.test(path)) || path === '/api/codex/dispatch' || path === '/api/codex/usage' ||
       path.startsWith('/api/work-items/')) ||
       method === 'POST' && (path === '/api/questions/' ||
         /^\/api\/questions\/[^/]+\/answer$/.test(path) ||
@@ -46,6 +59,7 @@ async function setup(t, questions = [initialQuestion()]) {
       throw new Error(`Unexpected request: ${method} ${path}`);
     }
     requests.push({ path, ...options });
+    if (path === '/api/codex/usage') return { ok: true, json: async () => ({ ordinaryUsageAllowed: true, rateLimits: { limitId: 'codex', limitName: null, primary: { usedPercent: 25, windowDurationMins: 10080, resetsAt: 1793779482 }, secondary: null, credits: { hasCredits: true, unlimited: false, balance: '12.5' } }, rateLimitsByLimitId: null }) };
     if (path.startsWith('/api/codex/threads?')) return { ok: true, json: async () => ({ threads: [threadA, threadB], nextCursor: null }) };
     if (path.startsWith('/api/codex/threads/')) return { ok: true, json: async () => ({ thread: threadA, goal: 'Keep data', goalStatus: 'active', latestReply: 'The original reply.', latestTurnStatus: 'completed' }) };
     if (path === '/api/codex/dispatch') {

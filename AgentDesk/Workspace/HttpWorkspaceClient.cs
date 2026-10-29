@@ -7,6 +7,7 @@ namespace AgentDesk.Workspace;
 
 public sealed class HttpWorkspaceClient(InboxHttpTransport transport) : IWorkspaceService, ICodexClient
 {
+    public Task<CodexUsage> UsageAsync(CancellationToken ct) => Send<CodexUsage>(HttpMethod.Get, "/api/codex/usage", null, ct);
     public Task<CodexThreadPage> ListAsync(string? path, string? cursor, CancellationToken ct)
     {
         var query = new List<string>();

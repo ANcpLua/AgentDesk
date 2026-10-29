@@ -21,6 +21,12 @@ public sealed class CodexClient(TimeProvider timeProvider) : ICodexClient
             ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex"),
             "app-server-control", "app-server-control.sock");
 
+    public async Task<CodexUsage> UsageAsync(CancellationToken ct)
+    {
+        await using var rpc = await ConnectAsync(ct);
+        return await rpc.CallAsync<CodexUsage>("account/rateLimits/read", new { }, ct);
+    }
+
     public async Task<CodexThreadPage> ListAsync(string? workspacePath, string? cursor, CancellationToken ct)
     {
         await using var rpc = await ConnectAsync(ct);
