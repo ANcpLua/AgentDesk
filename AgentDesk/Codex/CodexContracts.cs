@@ -1,5 +1,6 @@
 using JetBrains.Annotations;
 using AgentDesk.Domain;
+using System.Text.Json.Serialization;
 
 namespace AgentDesk.Codex;
 
@@ -21,10 +22,10 @@ public sealed record CodexThreadDetail(CodexThread Thread, string? Goal, string?
 
 /// <summary>A usage window reported by the Codex account service.</summary>
 [UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
-public sealed record CodexUsageWindow(double UsedPercent, long? WindowDurationMins, long? ResetsAt);
+public sealed record CodexUsageWindow([property: JsonRequired] double UsedPercent, long? WindowDurationMins, long? ResetsAt);
 /// <summary>Credit availability reported alongside account usage.</summary>
 [UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
-public sealed record CodexCredits(bool HasCredits, bool Unlimited, string? Balance);
+public sealed record CodexCredits([property: JsonRequired] bool HasCredits, [property: JsonRequired] bool Unlimited, string? Balance);
 /// <summary>A single metered account usage bucket.</summary>
 [UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
 public sealed record CodexUsageBucket(string? LimitId, string? LimitName, CodexUsageWindow? Primary,

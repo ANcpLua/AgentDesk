@@ -86,6 +86,36 @@ class InboxAcceptanceTests(unittest.TestCase):
                 raw = error.read()
                 return error.code, json.loads(raw) if raw and 'json' in error.headers.get('Content-Type', '') else raw
 
+    def codex_usage_tool(self):
+        process = subprocess.Popen(['dotnet', str(DLL), '--mcp-stdio'], env=self.env,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log, text=True, bufsize=1)
+        self.addCleanup(self.stop_process, process)
+
+        def rpc(request_id, method, params):
+            process.stdin.write(json.dumps({'jsonrpc': '2.0', 'id': request_id, 'method': method, 'params': params}) + '\n')
+            process.stdin.flush()
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                if select.select([process.stdout], [], [], .2)[0]:
+                    line = process.stdout.readline()
+                    self.assertTrue(line, 'MCP server closed stdout')
+                    response = json.loads(line)
+                    if response.get('id') == request_id:
+                        self.assertNotIn('error', response, response)
+                        return response['result']
+            self.fail('MCP usage request timed out: ' + method)
+
+        try:
+            rpc(1, 'initialize', {'protocolVersion': '2025-11-25', 'capabilities': {},
+                'clientInfo': {'name': 'usage-acceptance', 'version': '1.0'}})
+            process.stdin.write(json.dumps({'jsonrpc': '2.0', 'method': 'notifications/initialized'}) + '\n')
+            process.stdin.flush()
+            return rpc(2, 'tools/call', {'name': 'read_codex_usage', 'arguments': {}})
+        finally:
+            self.stop_process(process)
+            process.stdin.close()
+            process.stdout.close()
+
     def create(self, **overrides):
         body = {'prompt': 'Welchen Entwurf soll ich verwenden?', 'choices': [{'label': 'A'}, {'label': 'B'}],
                 'project': 'acceptance', 'conversationId': uuid.uuid4().hex, **overrides}
@@ -289,6 +319,100 @@ class InboxAcceptanceTests(unittest.TestCase):
         self.assertIsNone(usage['rateLimitsByLimitId'])
         self.assertIsNone(usage['rateLimits']['secondary'])
         self.assertEqual(usage['rateLimits']['credits']['balance'], '12.5')
+
+    def test_codex_usage_preserves_multiple_buckets_through_http_and_mcp(self):
+        main = {'limitId': 'codex', 'limitName': 'General',
+            'primary': {'usedPercent': 100, 'windowDurationMins': 300, 'resetsAt': 1793779482},
+            'secondary': None, 'credits': None}
+        premium = {'limitId': 'codex_premium', 'limitName': None, 'primary': None,
+            'secondary': {'usedPercent': 8, 'windowDurationMins': None, 'resetsAt': None},
+            'credits': {'hasCredits': False, 'unlimited': False, 'balance': None}}
+        expected = {'ordinaryUsageAllowed': False, 'rateLimits': main,
+            'rateLimitsByLimitId': {'codex': main, 'codex_premium': premium}}
+        self.codex.usage_replies = [{'result': expected}, {'result': expected}]
+
+        self.assertEqual(self.request('GET', '/api/codex/usage'), (200, expected))
+        result = self.codex_usage_tool()
+        self.assertFalse(result.get('isError', False), result)
+        self.assertEqual(result['structuredContent'], expected)
+        self.assertEqual(json.loads(result['content'][0]['text']), expected)
+        self.assertEqual([request['params'] for request in self.codex.usage_requests], [{}, {}])
+        self.assertEqual(self.codex.queued(), [])
+
+    def test_codex_usage_preserves_unavailable_values_through_http_and_mcp(self):
+        native = {'ordinaryUsageAllowed': None, 'rateLimits': {}, 'rateLimitsByLimitId': None}
+        expected = {'ordinaryUsageAllowed': None,
+            'rateLimits': {'limitId': None, 'limitName': None, 'primary': None, 'secondary': None, 'credits': None},
+            'rateLimitsByLimitId': None}
+        self.codex.usage_replies = [{'result': native}, {'result': native}]
+
+        self.assertEqual(self.request('GET', '/api/codex/usage'), (200, expected))
+        result = self.codex_usage_tool()
+        self.assertFalse(result.get('isError', False), result)
+        self.assertEqual(result['structuredContent'], expected)
+        self.assertEqual(self.codex.queued(), [])
+
+    def test_codex_usage_native_error_is_unavailable_and_retry_uses_new_connection(self):
+        expected = self.codex.response('account/rateLimits/read', {})
+        for transport in ('http', 'mcp'):
+            with self.subTest(transport=transport):
+                self.codex.usage_replies = [
+                    {'error': {'code': -32000, 'message': 'Usage temporarily unavailable'}},
+                    {'result': expected}]
+                start = len(self.codex.usage_requests)
+                if transport == 'http':
+                    status, problem = self.request('GET', '/api/codex/usage')
+                    self.assertEqual((status, problem['status'], problem['title']),
+                        (503, 503, 'Usage temporarily unavailable'))
+                    self.assertEqual(self.request('GET', '/api/codex/usage'), (200, expected))
+                else:
+                    error = self.codex_usage_tool()
+                    self.assertTrue(error['isError'], error)
+                    self.assertEqual(error['content'][0]['text'], 'Usage temporarily unavailable')
+                    self.assertIsNone(error.get('structuredContent'))
+                    result = self.codex_usage_tool()
+                    self.assertFalse(result.get('isError', False), result)
+                    self.assertEqual(result['structuredContent'], expected)
+                calls = self.codex.usage_requests[start:]
+                self.assertEqual(len(calls), 2)
+                self.assertNotEqual(calls[0]['connection'], calls[1]['connection'])
+                self.assertEqual([call['params'] for call in calls], [{}, {}])
+        self.assertEqual(self.codex.queued(), [])
+
+    def test_codex_usage_rejects_missing_required_fields_through_http_and_mcp(self):
+        for container, field in (('primary', 'usedPercent'), ('credits', 'hasCredits'), ('credits', 'unlimited')):
+            with self.subTest(case=field):
+                native = self.codex.response('account/rateLimits/read', {})
+                del native['rateLimits'][container][field]
+                self.codex.usage_replies = [{'result': native}, {'result': native}]
+                status, problem = self.request('GET', '/api/codex/usage')
+                self.assertEqual(status, 503, problem)
+                self.assertEqual((problem['status'], problem['title']),
+                    (503, 'Codex hat keine lesbaren Antwortdaten geliefert.'))
+                result = self.codex_usage_tool()
+                self.assertTrue(result['isError'], result)
+                self.assertEqual(result['content'][0]['text'], problem['title'])
+                self.assertIsNone(result.get('structuredContent'))
+        self.assertEqual(self.codex.queued(), [])
+
+    def test_codex_usage_malformed_payload_is_unavailable_through_http_and_mcp(self):
+        cases = (
+            ('invalid_json', b'not json'),
+            ('non_object_envelope', b'[]'),
+            ('missing_result', {}),
+            ('wrong_value_type', {'result': {'rateLimits': {'primary': {'usedPercent': 'invalid'}}}}))
+        for case, reply in cases:
+            with self.subTest(case=case):
+                self.codex.usage_replies = [reply, reply]
+                status, problem = self.request('GET', '/api/codex/usage')
+                self.assertEqual(status, 503, problem)
+                self.assertEqual((problem['status'], problem['title']),
+                    (503, 'Codex hat keine lesbaren Antwortdaten geliefert.'))
+                result = self.codex_usage_tool()
+                self.assertTrue(result['isError'], result)
+                self.assertEqual(result['content'][0]['text'], problem['title'])
+                self.assertIsNone(result.get('structuredContent'))
+        self.assertEqual(self.codex.queued(), [])
 
     def test_codex_list_and_detail_preserve_identity_without_full_history(self):
         status, page = self.request('GET', '/api/codex/threads')

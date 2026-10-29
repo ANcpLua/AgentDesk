@@ -14,6 +14,8 @@ const initialQuestion = (overrides = {}) => ({
 const threadA = { id: '11111111-1111-4111-8111-111111111111', name: 'Agent A', sessionId: 'session-a', workspacePath: '/projects/demo', status: 'idle', activeFlags: [], model: 'test-model', reasoningEffort: 'high', parentThreadId: null, forkedFromId: null, transcriptPath: '/sessions/a.jsonl', originator: 'codex-tui', agentRole: null };
 const threadB = { ...threadA, id: '22222222-2222-4222-8222-222222222222', name: 'Agent B', status: 'active' };
 const flush = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)); };
+const usage = (overrides = {}) => ({ ordinaryUsageAllowed: true, rateLimits: { limitId: 'codex', limitName: null, primary: { usedPercent: 25, windowDurationMins: 10080, resetsAt: 1793779482 }, secondary: null, credits: { hasCredits: true, unlimited: false, balance: '12.5' } }, rateLimitsByLimitId: null, ...overrides });
+const usageResponse = (data = usage()) => ({ ok: true, json: async () => data });
 
 test('usage view reads and refreshes the remaining allowance', async t => {
   const app = await setup(t);
@@ -21,14 +23,94 @@ test('usage view reads and refreshes the remaining allowance', async t => {
   await flush();
   const center = app.document.querySelector('#control-center');
   assert.match(center.textContent, /75 % verbleibend/);
-  assert.match(center.textContent, /Credits: 12\.5/);
+  assert.match(center.textContent, /Primäres Kontingent · 7 Tage/);
+  assert.match(center.textContent, /Credits: 12,5/);
   assert.match(center.textContent, /Zurücksetzung:/);
+  assert.doesNotMatch(center.textContent, /10080 Minuten/);
   center.querySelector('button').click();
   await flush();
   assert.equal(app.requests.filter(r => r.path === '/api/codex/usage').length, 2);
 });
 
-async function setup(t, questions = [initialQuestion()]) {
+test('usage failure replaces loading with an error and a working retry', async t => {
+  let attempts = 0;
+  const app = await setup(t, undefined, { readUsage: () => ++attempts === 1
+    ? { ok: false, json: async () => ({ title: 'Codex ist vorübergehend nicht erreichbar.' }) }
+    : usageResponse() });
+  app.document.querySelector('[data-view=usage]').click();
+  const center = app.document.querySelector('#control-center');
+  assert.match(center.textContent, /Nutzung wird geladen/);
+  assert.equal(center.querySelector('button').disabled, false);
+  await flush();
+  assert.match(center.querySelector('[role=alert]').textContent, /Codex ist vorübergehend nicht erreichbar/);
+  assert.doesNotMatch(center.textContent, /Nutzung wird geladen/);
+  const retry = center.querySelector('button');
+  assert.equal(retry.textContent, 'Erneut versuchen');
+  retry.click();
+  await flush();
+  assert.match(center.textContent, /75 % verbleibend/);
+  assert.equal(center.querySelector('[role=alert]'), null);
+  assert.equal(center.querySelector('button').textContent, 'Aktualisieren');
+  assert.equal(app.document.querySelector('#error').hidden, true);
+  assert.equal(app.requests.filter(r => r.path === '/api/codex/usage').length, 2);
+});
+
+for (const outcome of ['success', 'failure']) {
+  test(`usage view ignores an older ${outcome} after a newer request succeeds`, async t => {
+    const older = Promise.withResolvers();
+    const newer = Promise.withResolvers();
+    let attempts = 0;
+    const app = await setup(t, undefined, { readUsage: () => ++attempts === 1 ? older.promise : newer.promise });
+    app.document.querySelector('[data-view=usage]').click();
+    const center = app.document.querySelector('#control-center');
+    center.querySelector('button').click();
+    newer.resolve(usageResponse());
+    await flush();
+    assert.match(center.textContent, /75 % verbleibend/);
+    const freshContent = center.innerHTML;
+    if (outcome === 'success') older.resolve(usageResponse(usage({ rateLimits: { ...usage().rateLimits, primary: { usedPercent: 95, windowDurationMins: 60, resetsAt: null } } })));
+    else older.reject(new Error('Obsolete failure'));
+    await flush();
+    assert.equal(center.innerHTML, freshContent);
+    assert.equal(center.querySelector('[role=alert]'), null);
+    assert.equal(app.document.querySelector('#error').hidden, true);
+    assert.equal(app.requests.filter(r => r.path === '/api/codex/usage').length, 2);
+  });
+}
+
+test('usage completion after navigation cannot replace the active view', async t => {
+  const pending = Promise.withResolvers();
+  const app = await setup(t, undefined, { readUsage: () => pending.promise });
+  app.document.querySelector('[data-view=usage]').click();
+  app.document.querySelector('[data-view=work]').click();
+  await flush();
+  const center = app.document.querySelector('#control-center');
+  assert.ok(center.querySelector('.work-board'));
+  pending.resolve(usageResponse());
+  await flush();
+  assert.ok(center.querySelector('.work-board'));
+  assert.doesNotMatch(center.textContent, /75 % verbleibend/);
+});
+
+test('usage display explains periods and rounds credits while preserving the reported value', async t => {
+  const balance = '1234.5678901234';
+  const app = await setup(t, undefined, { readUsage: () => usageResponse(usage({ rateLimits: {
+    ...usage().rateLimits,
+    secondary: { usedPercent: 50, windowDurationMins: 90, resetsAt: null },
+    credits: { hasCredits: true, unlimited: false, balance }
+  } })) });
+  app.document.querySelector('[data-view=usage]').click();
+  await flush();
+  const center = app.document.querySelector('#control-center');
+  assert.match(center.textContent, /Sekundäres Kontingent · 1 Stunde 30 Minuten/);
+  assert.match(center.textContent, /50 % verbleibend/);
+  const credits = [...center.querySelectorAll('p')].find(p => p.textContent.startsWith('Credits:'));
+  assert.equal(credits.textContent, 'Credits: ≈ 1\u00a0234,57');
+  assert.equal(credits.title, `Gemeldeter Wert: ${balance}`);
+  assert.doesNotMatch(credits.textContent, /1234\.5678901234|€|\$|Token/);
+});
+
+async function setup(t, questions = [initialQuestion()], { readUsage = () => usageResponse() } = {}) {
   let snapshot = { revision: 1, questions };
   let stream;
   const requests = [];
@@ -59,7 +141,7 @@ async function setup(t, questions = [initialQuestion()]) {
       throw new Error(`Unexpected request: ${method} ${path}`);
     }
     requests.push({ path, ...options });
-    if (path === '/api/codex/usage') return { ok: true, json: async () => ({ ordinaryUsageAllowed: true, rateLimits: { limitId: 'codex', limitName: null, primary: { usedPercent: 25, windowDurationMins: 10080, resetsAt: 1793779482 }, secondary: null, credits: { hasCredits: true, unlimited: false, balance: '12.5' } }, rateLimitsByLimitId: null }) };
+    if (path === '/api/codex/usage') return readUsage();
     if (path.startsWith('/api/codex/threads?')) return { ok: true, json: async () => ({ threads: [threadA, threadB], nextCursor: null }) };
     if (path.startsWith('/api/codex/threads/')) return { ok: true, json: async () => ({ thread: threadA, goal: 'Keep data', goalStatus: 'active', latestReply: 'The original reply.', latestTurnStatus: 'completed' }) };
     if (path === '/api/codex/dispatch') {

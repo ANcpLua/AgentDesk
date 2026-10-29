@@ -147,7 +147,8 @@ public sealed class CodexClient(TimeProvider timeProvider) : ICodexClient
     }
 
     private static string? Text(JsonElement element, string name) =>
-        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value)
+            && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
     private static string Clip(string? value, int size) => string.IsNullOrEmpty(value) ? "" : value[..Math.Min(size, value.Length)];
 
     private sealed class RpcConnection : IAsyncDisposable
@@ -217,8 +218,15 @@ public sealed class CodexClient(TimeProvider timeProvider) : ICodexClient
         {
             var result = await CallElementAsync(method, parameters, ct);
             JsonTypeInfo<TResult> typeInfo = NativeJson.GetTypeInfo<TResult>();
-            return result.Deserialize(typeInfo)
-                ?? throw new CodexConnectionException("Codex hat keine lesbaren Antwortdaten geliefert.");
+            try
+            {
+                return result.Deserialize(typeInfo)
+                    ?? throw UnreadableResponse();
+            }
+            catch (JsonException)
+            {
+                throw UnreadableResponse();
+            }
         }
 
         private async Task<JsonElement> CallElementAsync(string method, object parameters, CancellationToken ct)
@@ -236,6 +244,10 @@ public sealed class CodexClient(TimeProvider timeProvider) : ICodexClient
             catch (Exception e) when (e is SocketException or WebSocketException or IOException)
             {
                 throw new CodexConnectionException("Die Verbindung zum Codex App Server wurde unterbrochen.");
+            }
+            catch (JsonException)
+            {
+                throw UnreadableResponse();
             }
         }
 
@@ -264,13 +276,21 @@ public sealed class CodexClient(TimeProvider timeProvider) : ICodexClient
                 } while (!frame.EndOfMessage);
                 using var document = JsonDocument.Parse(data.ToArray());
                 var root = document.RootElement;
-                if (!root.TryGetProperty("id", out var responseId) || responseId.ValueKind != JsonValueKind.Number || responseId.GetInt32() != id)
+                if (root.ValueKind != JsonValueKind.Object)
+                    throw UnreadableResponse();
+                if (!root.TryGetProperty("id", out var responseId) || responseId.ValueKind != JsonValueKind.Number
+                    || !responseId.TryGetInt32(out var returnedId) || returnedId != id)
                     continue;
                 if (root.TryGetProperty("error", out var error))
                     throw new CodexConnectionException(Text(error, "message") ?? "Codex-Anfrage fehlgeschlagen.");
-                return root.GetProperty("result").Clone();
+                if (!root.TryGetProperty("result", out var result))
+                    throw UnreadableResponse();
+                return result.Clone();
             }
         }
+
+        private static CodexConnectionException UnreadableResponse() =>
+            new("Codex hat keine lesbaren Antwortdaten geliefert.");
 
         private Task SendAsync(object value, CancellationToken ct) =>
             _webSocket.SendAsync(JsonSerializer.SerializeToUtf8Bytes(value).AsMemory(), WebSocketMessageType.Text, true, ct).AsTask();

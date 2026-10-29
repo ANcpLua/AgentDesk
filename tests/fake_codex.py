@@ -29,10 +29,17 @@ class FakeCodex:
         self.root = Path(self.temp.name)
         self.socket = self.root / 'c.sock'
         self.log = self.root / 'queued.jsonl'
+        self.usage_replies = []
+        self.usage_requests = []
+        self._requests_lock = threading.Lock()
+        self._next_connection = 0
         owner = self
 
         class Handler(socketserver.StreamRequestHandler):
             def handle(self):
+                with owner._requests_lock:
+                    owner._next_connection += 1
+                    connection_id = owner._next_connection
                 try:
                     headers = {}
                     self.rfile.readline()
@@ -58,12 +65,21 @@ class FakeCodex:
                         request = json.loads(data)
                         if 'id' not in request:
                             continue
-                        try:
-                            result = owner.response(request['method'], request.get('params', {}))
-                            response = {'id': request['id'], 'result': result}
-                        except KeyError:
-                            response = {'id': request['id'], 'error': {'code': -32000, 'message': 'Unknown test thread'}}
-                        output = json.dumps(response).encode()
+                        scripted = None
+                        if request['method'] == 'account/rateLimits/read':
+                            with owner._requests_lock:
+                                owner.usage_requests.append({'connection': connection_id, 'params': request.get('params')})
+                                if owner.usage_replies:
+                                    scripted = owner.usage_replies.pop(0)
+                        if scripted is not None:
+                            response = {'id': request['id'], **scripted} if isinstance(scripted, dict) else scripted
+                        else:
+                            try:
+                                result = owner.response(request['method'], request.get('params', {}))
+                                response = {'id': request['id'], 'result': result}
+                            except KeyError:
+                                response = {'id': request['id'], 'error': {'code': -32000, 'message': 'Unknown test thread'}}
+                        output = response if isinstance(response, bytes) else json.dumps(response).encode()
                         header = bytes([0x81, len(output)]) if len(output) < 126 else bytes([0x81, 126]) + struct.pack('!H', len(output))
                         self.wfile.write(header + output)
                         self.wfile.flush()

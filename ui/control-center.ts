@@ -21,6 +21,22 @@ const stateName = (status: string) => ({ active: 'Arbeitet', idle: 'Bereit', not
 const deliveryNames: Record<DeliveryState['kind'], string> = { sending: 'Wird gesendet', queued: 'Von Codex angenommen', failed: 'Fehlgeschlagen', uncertain: 'Zustellung unklar' };
 const deliveryName = (state: DeliveryState) => deliveryNames[state.kind];
 const deliveryReason = (state: DeliveryState) => state.kind === 'failed' || state.kind === 'uncertain' ? state.reason : null;
+function usageDuration(minutes: number): string {
+  if (!Number.isSafeInteger(minutes) || minutes <= 0) return `${minutes.toLocaleString('de-AT')} Minuten`;
+  const parts: string[] = [];
+  for (const [unit, singular, plural] of [[1440, 'Tag', 'Tage'], [60, 'Stunde', 'Stunden'], [1, 'Minute', 'Minuten']] as const) {
+    const amount = Math.floor(minutes / unit);
+    if (amount) parts.push(`${amount.toLocaleString('de-AT')} ${amount === 1 ? singular : plural}`);
+    minutes %= unit;
+  }
+  return parts.join(' ');
+}
+function usageCredits(balance: string): string {
+  const value = Number(balance);
+  if (!balance.trim() || !Number.isFinite(value)) return balance;
+  const rounded = Number(value.toFixed(2)) !== value;
+  return `${rounded ? '≈ ' : ''}${value.toLocaleString('de-AT', { maximumFractionDigits: 2 })}`;
+}
 
 export function startControlCenter(api: Api, report: (error: unknown) => void) {
   let threads: Thread[] = [];
@@ -31,6 +47,7 @@ export function startControlCenter(api: Api, report: (error: unknown) => void) {
   let question: DispatchQuestion | null = null;
   let dispatchKey = '';
   let lastSendNote = '';
+  let usageRequest = 0;
   const center = $('control-center');
 
   function setView(next: string) {
@@ -50,32 +67,49 @@ export function startControlCenter(api: Api, report: (error: unknown) => void) {
   }
 
   async function renderUsage() {
-    center.replaceChildren(el('p', 'muted', 'Nutzung wird geladen …'));
-    const usage = await api<Usage>('read_codex_usage');
-    if (view !== 'usage') return;
-    center.replaceChildren();
+    const request = ++usageRequest;
     const refresh = el('button', 'button secondary', 'Aktualisieren');
     refresh.onclick = () => void renderUsage().catch(report);
-    center.append(refresh);
+    const content = el('div');
+    const loading = el('p', 'muted', 'Nutzung wird geladen …'); loading.setAttribute('role', 'status');
+    content.append(loading);
+    center.replaceChildren(refresh, content);
+    let usage: Usage;
+    try {
+      usage = await api<Usage>('read_codex_usage');
+    } catch (error) {
+      if (view !== 'usage' || request !== usageRequest) return;
+      const failure = el('p', 'question-error', `Nutzung konnte nicht geladen werden. ${error instanceof Error ? error.message : String(error)}`);
+      failure.setAttribute('role', 'alert');
+      content.replaceChildren(failure);
+      refresh.textContent = 'Erneut versuchen';
+      return;
+    }
+    if (view !== 'usage' || request !== usageRequest) return;
+    content.replaceChildren();
     const buckets = Object.entries(usage.rateLimitsByLimitId ?? {});
     if (!buckets.length && usage.rateLimits) buckets.push([usage.rateLimits.limitId ?? 'Codex', usage.rateLimits]);
-    if (!buckets.length) center.append(el('p', 'muted', 'Keine Nutzungsdaten verfügbar.'));
+    if (!buckets.length) content.append(el('p', 'muted', 'Keine Nutzungsdaten verfügbar.'));
     for (const [key, bucket] of buckets) {
       const card = el('article', 'work-card');
       card.append(el('h2', '', bucket.limitName ?? bucket.limitId ?? key));
-      for (const [label, window] of [['Primär', bucket.primary], ['Sekundär', bucket.secondary]] as const) {
+      for (const [label, window] of [['Primäres Kontingent', bucket.primary], ['Sekundäres Kontingent', bucket.secondary]] as const) {
         if (!window) continue;
         const remaining = Math.max(0, Math.min(100, 100 - window.usedPercent));
-        card.append(el('p', '', `${label}: ${remaining.toLocaleString('de-AT')} % verbleibend`));
-        if (window.windowDurationMins != null) card.append(el('p', 'muted compact', `Zeitraum: ${window.windowDurationMins} Minuten`));
+        const period = window.windowDurationMins == null ? '' : ` · ${usageDuration(window.windowDurationMins)}`;
+        card.append(el('h3', '', label + period), el('p', '', `${remaining.toLocaleString('de-AT')} % verbleibend`));
         if (window.resetsAt != null) card.append(el('p', 'muted compact', `Zurücksetzung: ${new Date(window.resetsAt * 1000).toLocaleString('de-AT')}`));
       }
       if (!bucket.primary && !bucket.secondary) card.append(el('p', 'muted', 'Kein Kontingent verfügbar.'));
       if (bucket.credits?.unlimited) card.append(el('p', 'muted compact', 'Credits: unbegrenzt'));
-      else if (bucket.credits?.balance != null) card.append(el('p', 'muted compact', `Credits: ${bucket.credits.balance}`));
-      center.append(card);
+      else if (bucket.credits?.balance != null) {
+        const credits = el('p', 'muted compact', `Credits: ${usageCredits(bucket.credits.balance)}`);
+        credits.title = `Gemeldeter Wert: ${bucket.credits.balance}`;
+        card.append(credits);
+      }
+      content.append(card);
     }
-    if (usage.ordinaryUsageAllowed === false) center.append(el('p', 'muted', 'Die enthaltene Nutzung ist derzeit nicht verfügbar.'));
+    if (usage.ordinaryUsageAllowed === false) content.append(el('p', 'muted', 'Die enthaltene Nutzung ist derzeit nicht verfügbar.'));
   }
 
   async function loadThreads(append = false) {
