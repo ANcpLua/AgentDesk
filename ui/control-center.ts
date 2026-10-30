@@ -1,4 +1,7 @@
 import { workNote, workState, type Question, type DeliveryState, type WorkOwner, type WorkState, type DispatchContent } from './contracts';
+import { createHooksView } from './hooks';
+import { renderTokenActivity } from './token-activity';
+import { mountMcpHealth } from './mcp-health';
 
 export type Api = <T>(name: string, args?: Record<string, unknown>) => Promise<T>;
 interface Thread {
@@ -48,9 +51,12 @@ export function startControlCenter(api: Api, report: (error: unknown) => void) {
   let dispatchKey = '';
   let lastSendNote = '';
   let usageRequest = 0;
+  let viewGeneration = 0;
   const center = $('control-center');
+  const renderHooks = createHooksView(api, center, () => view === 'hooks');
 
   function setView(next: string) {
+    const generation = ++viewGeneration;
     view = next; document.body.dataset.view = view;
     $('project').hidden = view !== 'questions';
     document.querySelector<HTMLLabelElement>('label[for=project]')!.hidden = view !== 'questions';
@@ -59,11 +65,12 @@ export function startControlCenter(api: Api, report: (error: unknown) => void) {
     $('new-question').hidden = view !== 'questions';
     if (view === 'questions') return;
     document.querySelectorAll('[data-filter]').forEach(n => n.classList.remove('active'));
-    $('heading').textContent = view === 'agents' ? 'Deine Codex-Threads' : view === 'usage' ? 'Codex-Nutzung' : 'Gemeinsam weiterkommen';
+    $('heading').textContent = view === 'agents' ? 'Deine Codex-Threads' : view === 'usage' ? 'Codex-Nutzung' : view === 'hooks' ? 'Codex-Hooks & Vertrauen' : view === 'mcp' ? 'MCP-Verbindungen' : 'Gemeinsam weiterkommen';
     document.querySelector('.intro')!.textContent = view === 'agents'
       ? 'Bestehende Threads gezielt erreichen. Eine Nachricht, mehrere Empfänger.'
-      : view === 'usage' ? 'Aktuelle Kontingente deines Codex-Kontos.' : 'Nächste Schritte, Zuständigkeiten und Ergebnisse bleiben nachvollziehbar.';
-    if (view === 'agents') void loadThreads().catch(report); else if (view === 'usage') void renderUsage().catch(report); else void renderWork().catch(report);
+      : view === 'usage' ? 'Aktuelle Kontingente und tägliche Token-Aktivität deines Codex-Kontos.' : view === 'hooks' ? 'Konfigurierte Hooks mit ihrem von Codex gemeldeten Vertrauensstatus.' : view === 'mcp' ? 'Gemeldete Verbindungen, Anmeldung und Werkzeugverfügbarkeit in Codex.' : 'Nächste Schritte, Zuständigkeiten und Ergebnisse bleiben nachvollziehbar.';
+    if (view === 'mcp') { mountMcpHealth(center, api, () => view === 'mcp' && generation === viewGeneration); return; }
+    if (view === 'agents') void loadThreads().catch(report); else if (view === 'usage') void renderUsage().catch(report); else if (view === 'hooks') void renderHooks().catch(report); else void renderWork().catch(report);
   }
 
   async function renderUsage() {
@@ -73,7 +80,9 @@ export function startControlCenter(api: Api, report: (error: unknown) => void) {
     const content = el('div');
     const loading = el('p', 'muted', 'Nutzung wird geladen …'); loading.setAttribute('role', 'status');
     content.append(loading);
-    center.replaceChildren(refresh, content);
+    const activity = el('section', 'token-activity');
+    center.replaceChildren(refresh, content, activity);
+    void renderTokenActivity(api, activity, () => view === 'usage' && request === usageRequest);
     let usage: Usage;
     try {
       usage = await api<Usage>('read_codex_usage');

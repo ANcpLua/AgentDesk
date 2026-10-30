@@ -9,7 +9,7 @@ namespace AgentDesk.Codex;
 
 // Uses public app-server JSON-RPC over its local WebSocket socket for reads,
 // and the user's installed `codex queue` command for writes. Never opens Codex's SQLite DB.
-public sealed class CodexClient(TimeProvider timeProvider) : ICodexClient
+public sealed partial class CodexClient(TimeProvider timeProvider) : ICodexClient
 {
     private static readonly JsonSerializerOptions NativeJson = new(JsonSerializerDefaults.Web)
     {
@@ -25,6 +25,37 @@ public sealed class CodexClient(TimeProvider timeProvider) : ICodexClient
     {
         await using var rpc = await ConnectAsync(ct);
         return await rpc.CallAsync<CodexUsage>("account/rateLimits/read", new { }, ct);
+    }
+
+    public async Task<CodexTokenActivity> TokenActivityAsync(CancellationToken ct)
+    {
+        await using var rpc = await ConnectAsync(ct);
+        var activity = await rpc.CallAsync<NativeTokenActivity>("account/usage/read", new { }, ct);
+        return activity.ToResponse();
+    }
+
+    public async Task<CodexMcpServerPage> McpServersAsync(string? threadId, string? serverName, string? cursor, CancellationToken ct)
+    {
+        if (threadId is not null) ValidateId(threadId);
+        await using var rpc = await ConnectAsync(ct);
+        NativeMcpServerPage page;
+        try
+        {
+            page = await rpc.CallAsync<NativeMcpServerPage>("mcpServerStatus/list", new
+            {
+                threadId, serverName, cursor, limit = 50, detail = "toolsAndAuthOnly"
+            }, ct);
+        }
+        catch (CodexConnectionException error) when (error.RpcCode == -32601)
+        {
+            throw new Questions.QuestionException(501, "Diese Codex-Version stellt MCP-Verbindungsstatus nicht bereit.");
+        }
+        if (page.Data is null || page.Data.Any(server => server is null || string.IsNullOrWhiteSpace(server.Name)
+                || string.IsNullOrWhiteSpace(server.AuthStatus) || server.Tools is null))
+            throw new CodexConnectionException("Codex hat keine lesbaren MCP-Statusdaten geliefert.");
+        return new(page.Data.Select(server => new CodexMcpServer(server.Name, server.RuntimeStatus,
+            server.AuthStatus, server.ToolsError is null ? server.Tools.Count : null,
+            server.ToolsError, server.HttpOrigin, server.PluginId)).ToArray(), page.NextCursor);
     }
 
     public async Task<CodexThreadPage> ListAsync(string? workspacePath, string? cursor, CancellationToken ct)
@@ -282,7 +313,11 @@ public sealed class CodexClient(TimeProvider timeProvider) : ICodexClient
                     || !responseId.TryGetInt32(out var returnedId) || returnedId != id)
                     continue;
                 if (root.TryGetProperty("error", out var error))
-                    throw new CodexConnectionException(Text(error, "message") ?? "Codex-Anfrage fehlgeschlagen.");
+                {
+                    var code = error.ValueKind == JsonValueKind.Object && error.TryGetProperty("code", out var codeValue)
+                        && codeValue.ValueKind == JsonValueKind.Number && codeValue.TryGetInt32(out var parsedCode) ? parsedCode : (int?)null;
+                    throw new CodexConnectionException(Text(error, "message") ?? "Codex-Anfrage fehlgeschlagen.", code);
+                }
                 if (!root.TryGetProperty("result", out var result))
                     throw UnreadableResponse();
                 return result.Clone();

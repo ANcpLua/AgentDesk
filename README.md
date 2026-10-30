@@ -14,6 +14,17 @@ bestehende Thread-IDs. Kein Modell-API-Aufruf, kein OpenAI-/Azure-Key erforderli
 - **Codex-Nutzung:** aktuelle verbleibende Kontingente und gemeldete Zurücksetzungszeiten
   pro Konto. Die Ansicht liest bei Aufruf oder Aktualisierung den laufenden lokalen
   Codex App Server; sie benötigt keinen Agenten- oder Modellaufruf und führt keinen Reset aus.
+- **Hooks & Vertrauen:** konfigurierte Codex-Hooks für das native Arbeitsverzeichnis
+  oder einen ausdrücklich eingegebenen absoluten Projektpfad. Die Ansicht zeigt
+  Ereignis, Handler, Herkunft, Aktivierung und den von Codex gemeldeten Vertrauensstatus
+  sowie Ladefehler und Warnungen. Vertrauen und Freigaben verwaltest du weiterhin in Codex.
+- **Tägliche Token-Aktivität:** kontoweite Tageswerte und Zusammenfassung aus
+  `account/usage/read`, getrennt von den verbleibenden Kontingenten. Nicht gemeldete
+  Werte bleiben als nicht verfügbar sichtbar; fehlende Tage werden nicht mit Null aufgefüllt.
+- **MCP-Verbindungen:** gemeldeter Laufzeitstatus, Authentifizierung und Werkzeugverfügbarkeit.
+  Wähle einen in Codex geladenen Thread für dessen Verbindungen; ein fehlender Laufzeitstatus
+  bleibt unbekannt. Werkzeugkatalog und Anmeldung sind getrennte Angaben. Server- und
+  Thread-Listen können weitere Seiten haben. Aktualisieren liest erneut aus Codex.
 - **Gemeinsame Aufgaben:** Operator oder konkreter Agent-Thread als Verantwortlicher;
   offene, laufende, blockierte und abgeschlossene Aufgaben mit Ergebnisnachweis.
 - **Antwort an Codex senden:** Antwort prüfen, Empfänger wählen und bewusst absenden.
@@ -151,9 +162,40 @@ oder `decision: {"kind":"dismiss"}` plus `expectedVersion` entgegen.
 Die Herkunft einer weitergereichten Antwort kommt aus der gespeicherten Frage.
 
 Weitere Werkzeuge: `list_questions`, `get_question`, `open_question_inbox`,
-`list_codex_threads`, `read_codex_thread`, `list_dispatches`, `list_work_items`,
+`list_codex_threads`, `read_codex_thread`, `list_codex_mcp_servers`, `list_codex_hooks`, `read_codex_usage`, `read_codex_token_activity`, `list_dispatches`, `list_work_items`,
 `create_work_item`, `update_work_item`. Vollständige HTTP-Beispiele stehen in
 `AgentDesk/AgentDesk.http`.
+
+`list_codex_hooks` liest denselben Bestand wie **Hooks & Vertrauen**. Optionales
+`workspacePath` muss absolut sein; ohne Pfad gilt Codex' aktuelles Arbeitsverzeichnis.
+HTTP: `GET /api/codex/hooks?workspacePath=/absoluter/Projektpfad`.
+Die Metadaten stammen aus `hooks/list` des installierten App Servers (Vertrag mit
+`codex-cli 0.165.0` geprüft). `enabled` und `trustStatus` bleiben unabhängige Werte;
+unbekannte native Statuswerte werden sichtbar erhalten. Der Lesezugriff führt
+keine Hooks aus und ändert weder Konfiguration noch Freigaben. Ein nicht erreichbarer
+oder inkompatibler App Server wird als Fehler angezeigt, nicht als leerer Bestand.
+`GET /api/codex/token-activity` und `read_codex_token_activity` lesen ausschließlich
+die kontoweite Codex-Aggregation. Sie importieren keine Chatverläufe. Die Antwort
+enthält `summary` mit `lifetimeTokens`, `peakDailyTokens`, `longestRunningTurnSec`,
+`currentStreakDays` und `longestStreakDays` sowie `dailyUsageBuckets` mit
+`startDate` und `tokens`. Alle Zähler werden als exakte Dezimalstrings ausgegeben,
+damit Browser auch große 64-Bit-Werte verlustfrei darstellen. `null` bedeutet
+nicht verfügbar; ein leeres Tagesarray bedeutet keine gemeldeten Tage. Ein
+Lese- oder Protokollfehler liefert HTTP 503 beziehungsweise einen MCP-Toolfehler.
+Token-Aktivität und Kontingente werden unabhängig geladen und können separat
+fehlschlagen. Der bestehende `/api/codex/usage`-Vertrag bleibt erhalten.
+
+`list_codex_mcp_servers` liest eine Seite der Codex-MCP-Server. Optionale Parameter:
+`threadId` für den jeweiligen Laufzeitkontext, `serverName` als Filter und `cursor`
+für die nächste Seite aus `nextCursor`. HTTP: `GET /api/codex/mcp-servers` mit
+denselben Query-Parametern. `runtimeStatus: null` bedeutet unbekannt,
+`toolCount: null` mit `toolsError` einen Fehler bei der Werkzeug-Ermittlung.
+Ein nur gespeicherter Thread besitzt noch keinen geladenen Laufzeitkontext. Codex
+kann dessen Abfrage mit `thread not found` ablehnen; AgentDesk zeigt diesen Fehler
+an und lädt oder startet den Thread nicht automatisch.
+Eine nicht unterstützte native Methode liefert HTTP 501; Verbindungs- und andere
+native Lesefehler bleiben Fehler (HTTP 503). Es wird keine Verbindung neu gestartet,
+keine Anmeldung ausgelöst und keine Konfiguration geändert.
 
 Die MCP-App nutzt den standardisierten Host-Bridge; die Browseransicht verwendet
 SSE. Der Zustand liegt im Backend. Die Darstellung der eingebetteten Ansicht

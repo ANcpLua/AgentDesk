@@ -31,6 +31,13 @@ class FakeCodex:
         self.log = self.root / 'queued.jsonl'
         self.usage_replies = []
         self.usage_requests = []
+        self.hooks_replies = []
+        self.hooks_requests = []
+        self.native_requests = []
+        self.token_activity_replies = []
+        self.token_activity_requests = []
+        self.mcp_replies = []
+        self.mcp_requests = []
         self._requests_lock = threading.Lock()
         self._next_connection = 0
         owner = self
@@ -65,12 +72,29 @@ class FakeCodex:
                         request = json.loads(data)
                         if 'id' not in request:
                             continue
+                        with owner._requests_lock:
+                            owner.native_requests.append(request['method'])
                         scripted = None
                         if request['method'] == 'account/rateLimits/read':
                             with owner._requests_lock:
                                 owner.usage_requests.append({'connection': connection_id, 'params': request.get('params')})
                                 if owner.usage_replies:
                                     scripted = owner.usage_replies.pop(0)
+                        if request['method'] == 'hooks/list':
+                            with owner._requests_lock:
+                                owner.hooks_requests.append({'connection': connection_id, 'params': request.get('params')})
+                                if owner.hooks_replies:
+                                    scripted = owner.hooks_replies.pop(0)
+                        if request['method'] == 'account/usage/read':
+                            with owner._requests_lock:
+                                owner.token_activity_requests.append({'connection': connection_id, 'params': request.get('params')})
+                                if owner.token_activity_replies:
+                                    scripted = owner.token_activity_replies.pop(0)
+                        if request['method'] == 'mcpServerStatus/list':
+                            with owner._requests_lock:
+                                owner.mcp_requests.append({'connection': connection_id, 'params': request.get('params')})
+                                if owner.mcp_replies:
+                                    scripted = owner.mcp_replies.pop(0)
                         if scripted is not None:
                             response = {'id': request['id'], **scripted} if isinstance(scripted, dict) else scripted
                         else:
@@ -123,6 +147,27 @@ print(f'Queued message {uuid.uuid4()} for thread {thread}.')
                 'primary': {'usedPercent': 25, 'windowDurationMins': 10080, 'resetsAt': 1793779482},
                 'secondary': None, 'credits': {'hasCredits': True, 'unlimited': False, 'balance': '12.5'}},
                 'rateLimitsByLimitId': None}
+        if method == 'hooks/list':
+            cwd = (args.get('cwds') or [WORKSPACE])[0]
+            return {'data': [{'cwd': cwd, 'hooks': [{
+                'key': 'local-pre-tool', 'eventName': 'preToolUse', 'matcher': 'exec.*',
+                'timeoutSec': 30, 'statusMessage': 'Inspecting command', 'additionalContextLimit': None,
+                'sourcePath': cwd + '/.codex/hooks.json', 'source': 'project', 'pluginId': None,
+                'displayOrder': 0, 'enabled': True, 'isManaged': False, 'currentHash': 'sha256:test-hook',
+                'trustStatus': 'untrusted', 'handlerType': 'command', 'command': 'echo hook-preview',
+                'async': False, 'server': None, 'tool': None}], 'warnings': [], 'errors': []}]}
+        if method == 'account/usage/read':
+            return {'summary': {'lifetimeTokens': 123456, 'peakDailyTokens': 12345,
+                'longestRunningTurnSec': 3600, 'currentStreakDays': 2, 'longestStreakDays': 5},
+                'dailyUsageBuckets': [{'startDate': '2026-10-28', 'tokens': 12345},
+                    {'startDate': '2026-10-29', 'tokens': 0}]}
+        if method == 'mcpServerStatus/list':
+            if args.get('threadId'):
+                thread_info(args['threadId'])
+            return {'data': [{'name': 'local-tools', 'authStatus': 'unsupported',
+                'runtimeStatus': 'connected' if args.get('threadId') else None,
+                'tools': {'read': {'name': 'read', 'inputSchema': {}}},
+                'toolsError': None, 'resources': [], 'resourceTemplates': []}], 'nextCursor': None}
         if method == 'thread/list':
             items = [thread_info(THREAD_A), thread_info(THREAD_B)]
             if args.get('cwd') and args['cwd'] != WORKSPACE:

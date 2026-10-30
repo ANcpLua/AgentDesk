@@ -61,3 +61,12 @@ X-Question-Inbox: 1
 {"expectedVersion":1,"state":{"kind":"done","evidence":"Antwort im richtigen Thread geprüft."}}
 ### Current Codex account usage
 GET http://localhost:5137/api/codex/usage
+
+### Account-wide daily token activity (exact decimal string counters; null means unavailable)
+GET http://localhost:5137/api/codex/token-activity
+
+### MCP inventory (runtime status can be unavailable without a thread)
+GET {{baseUrl}}/api/codex/mcp-servers
+
+### Thread-scoped MCP connection health (replace UUID; follow nextCursor when present)
+GET {{baseUrl}}/api/codex/mcp-servers?threadId=replace-with-thread-uuid

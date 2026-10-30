@@ -7,7 +7,18 @@ namespace AgentDesk.Workspace;
 
 public sealed class HttpWorkspaceClient(InboxHttpTransport transport) : IWorkspaceService, ICodexClient
 {
+    public Task<CodexHooks> HooksAsync(string? workspacePath, CancellationToken ct) =>
+        Send<CodexHooks>(HttpMethod.Get, "/api/codex/hooks" + (workspacePath is null ? "" : "?workspacePath=" + Uri.EscapeDataString(workspacePath)), null, ct);
+    public Task<CodexMcpServerPage> McpServersAsync(string? threadId, string? serverName, string? cursor, CancellationToken ct)
+    {
+        var query = new List<string>();
+        if (threadId is not null) query.Add("threadId=" + Uri.EscapeDataString(threadId));
+        if (serverName is not null) query.Add("serverName=" + Uri.EscapeDataString(serverName));
+        if (cursor is not null) query.Add("cursor=" + Uri.EscapeDataString(cursor));
+        return Send<CodexMcpServerPage>(HttpMethod.Get, "/api/codex/mcp-servers?" + string.Join("&", query), null, ct);
+    }
     public Task<CodexUsage> UsageAsync(CancellationToken ct) => Send<CodexUsage>(HttpMethod.Get, "/api/codex/usage", null, ct);
+    public Task<CodexTokenActivity> TokenActivityAsync(CancellationToken ct) => Send<CodexTokenActivity>(HttpMethod.Get, "/api/codex/token-activity", null, ct);
     public Task<CodexThreadPage> ListAsync(string? path, string? cursor, CancellationToken ct)
     {
         var query = new List<string>();

@@ -86,6 +86,9 @@ public sealed class TimeProviderTests(TestContext context)
 
     private sealed class StubCodex : ICodexClient
     {
+        public Task<CodexHooks> HooksAsync(string? workspacePath, CancellationToken ct) => throw new NotSupportedException();
+        public Task<CodexTokenActivity> TokenActivityAsync(CancellationToken ct) => throw new NotSupportedException();
+        public Task<CodexMcpServerPage> McpServersAsync(string? threadId, string? serverName, string? cursor, CancellationToken ct) => throw new NotSupportedException();
         public Task<CodexUsage> UsageAsync(CancellationToken ct) => throw new NotSupportedException();
         public Task<CodexThreadPage> ListAsync(string? workspacePath, string? cursor, CancellationToken ct) => throw new NotSupportedException();
         public Task<CodexThread> GetAsync(string threadId, CancellationToken ct) => Task.FromResult(new CodexThread(
@@ -96,6 +99,9 @@ public sealed class TimeProviderTests(TestContext context)
 
     private sealed class NoCodex : ICodexClient
     {
+        public Task<CodexHooks> HooksAsync(string? workspacePath, CancellationToken ct) => throw new NotSupportedException();
+        public Task<CodexTokenActivity> TokenActivityAsync(CancellationToken ct) => throw new NotSupportedException();
+        public Task<CodexMcpServerPage> McpServersAsync(string? threadId, string? serverName, string? cursor, CancellationToken ct) => throw new NotSupportedException();
         public Task<CodexUsage> UsageAsync(CancellationToken ct) => throw new NotSupportedException();
         public Task<CodexThreadPage> ListAsync(string? workspacePath, string? cursor, CancellationToken ct) => throw new NotSupportedException();
         public Task<CodexThread> GetAsync(string threadId, CancellationToken ct) => throw new NotSupportedException();

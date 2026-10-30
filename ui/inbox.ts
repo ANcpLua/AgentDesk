@@ -44,6 +44,13 @@ async function call<T>(name: string, args: Record<string, unknown> = {}): Promis
   }
   if (name === 'read_codex_thread') path = '/api/codex/threads/' + encodeURIComponent(String(args.threadId));
   if (name === 'read_codex_usage') path = '/api/codex/usage';
+  if (name === 'list_codex_hooks') path = '/api/codex/hooks' + (args.workspacePath ? '?workspacePath=' + encodeURIComponent(String(args.workspacePath)) : '');
+  if (name === 'read_codex_token_activity') path = '/api/codex/token-activity';
+  if (name === 'list_codex_mcp_servers') {
+    const params = new URLSearchParams();
+    for (const key of ['threadId', 'serverName', 'cursor']) if (args[key] != null) params.set(key, String(args[key]));
+    path = '/api/codex/mcp-servers?' + params;
+  }
   if (name === 'dispatch_to_codex') { path = '/api/codex/dispatch'; method = 'POST'; body = args; }
   if (name === 'list_dispatches') path = '/api/codex/dispatch';
   if (name === 'list_work_items') path = '/api/work-items/' + (args.workspacePath ? '?workspacePath=' + encodeURIComponent(String(args.workspacePath)) : '');

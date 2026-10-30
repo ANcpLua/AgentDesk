@@ -16,6 +16,265 @@ const threadB = { ...threadA, id: '22222222-2222-4222-8222-222222222222', name: 
 const flush = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)); };
 const usage = (overrides = {}) => ({ ordinaryUsageAllowed: true, rateLimits: { limitId: 'codex', limitName: null, primary: { usedPercent: 25, windowDurationMins: 10080, resetsAt: 1793779482 }, secondary: null, credits: { hasCredits: true, unlimited: false, balance: '12.5' } }, rateLimitsByLimitId: null, ...overrides });
 const usageResponse = (data = usage()) => ({ ok: true, json: async () => data });
+const tokenActivity = (overrides = {}) => ({ summary: { lifetimeTokens: '9007199254740993', peakDailyTokens: '12345',
+  longestRunningTurnSec: '3600', currentStreakDays: '0', longestStreakDays: '5' },
+  dailyUsageBuckets: [{ startDate: '2026-10-28', tokens: '12345' }, { startDate: '2026-10-29', tokens: '0' }], ...overrides });
+const tokenResponse = (data = tokenActivity()) => ({ ok: true, json: async () => data });
+const hook = (overrides = {}) => ({ key: 'guard', eventName: 'preToolUse', matcher: 'exec.*', timeoutSec: 30,
+  statusMessage: 'Inspecting command', additionalContextLimit: null, sourcePath: '/projects/demo/.codex/hooks.json',
+  source: 'project', pluginId: null, displayOrder: 0, enabled: true, isManaged: false, currentHash: 'sha256:test',
+  trustStatus: 'untrusted', handlerType: 'command', command: 'echo <hook-preview>', async: false, server: null, tool: null, ...overrides });
+const hooksResponse = (hooks = [hook()], overrides = {}) => ({ ok: true, json: async () => ({ data: [{ cwd: '/projects/demo', hooks, warnings: [], errors: [], ...overrides }] }) });
+
+test('hooks view shows native trust independently from enabled and managed state', async t => {
+  const app = await setup(t, undefined, { readHooks: () => hooksResponse([
+    hook(), hook({ key: 'managed', handlerType: 'mcpTool', command: null, async: null, server: 'policy', tool: 'review', trustStatus: 'managed', isManaged: true, pluginId: 'policy@company' }),
+    hook({ key: 'trusted', handlerType: 'prompt', trustStatus: 'trusted', enabled: false }),
+    hook({ key: 'modified', handlerType: 'agent', trustStatus: 'modified' }),
+    hook({ key: 'future', handlerType: 'futureHandler', trustStatus: 'futureTrust', source: 'futureSource' })
+  ]) });
+  app.document.querySelector('[data-view=hooks]').click(); await flush();
+  const center = app.document.querySelector('#control-center');
+  assert.equal(app.document.querySelector('#heading').textContent, 'Codex-Hooks & Vertrauen');
+  const cards = [...center.querySelectorAll('.hook-card')];
+  assert.equal(cards.length, 5);
+  assert.match(cards[0].textContent, /Vertrauen: Nicht vertraut/);
+  assert.match(cards[0].textContent, /Aktiviert/);
+  assert.match(cards[0].textContent, /Aktivierung allein bestätigt keine Freigabe/);
+  assert.match(cards[0].textContent, /\/projects\/demo\/\.codex\/hooks.json/);
+  assert.equal(cards[0].querySelector('pre').textContent, 'echo <hook-preview>');
+  assert.equal(cards[0].querySelector('hook-preview'), null);
+  assert.match(cards[0].textContent, /sha256:test/);
+  assert.match(cards[1].textContent, /Vertrauen: Verwaltet/);
+  assert.match(cards[1].textContent, /Zentral verwaltet/);
+  assert.match(cards[1].textContent, /MCP: policy \/ review/);
+  assert.match(cards[1].textContent, /policy@company/);
+  assert.match(cards[2].textContent, /Vertrauen: Vertraut/);
+  assert.match(cards[2].textContent, /Deaktiviert/);
+  assert.match(cards[3].textContent, /Seit der Freigabe geändert/);
+  assert.match(cards[4].textContent, /futureTrust|futureSource/);
+  assert.equal(center.querySelectorAll('button').length, 1);
+  assert.deepEqual(app.requests.filter(r => r.path.startsWith('/api/codex/hooks')).map(r => [r.method, r.path]), [['GET', '/api/codex/hooks']]);
+  assert.equal(app.requests.filter(r => r.method !== 'GET').length, 0);
+});
+
+test('hooks view preserves load diagnostics and distinguishes empty configuration', async t => {
+  const app = await setup(t, undefined, { readHooks: () => hooksResponse([], { warnings: ['Duplicate matcher'], errors: [{ path: '/bad/hooks.json', message: 'Invalid hook' }] }) });
+  app.document.querySelector('[data-view=hooks]').click(); await flush();
+  const center = app.document.querySelector('#control-center');
+  assert.match(center.textContent, /Warnung: Duplicate matcher/);
+  assert.match(center.querySelector('[role=alert]').textContent, /Fehler in \/bad\/hooks.json: Invalid hook/);
+  assert.match(center.textContent, /keine Hooks gemeldet/);
+  assert.equal(center.querySelectorAll('.hook-card').length, 0);
+});
+
+test('hooks view shows an empty native snapshot without inventing a project', async t => {
+  const app = await setup(t, undefined, { readHooks: () => ({ ok: true, json: async () => ({ data: [] }) }) });
+  app.document.querySelector('[data-view=hooks]').click(); await flush();
+  const center = app.document.querySelector('#control-center');
+  assert.match(center.textContent, /keine Hook-Konfiguration gemeldet/);
+  assert.equal(center.querySelector('.hooks-project'), null);
+  assert.equal(center.querySelector('[role=alert]'), null);
+});
+
+test('hooks view sends the explicit project path and retains it on refresh', async t => {
+  const app = await setup(t); app.document.querySelector('[data-view=hooks]').click(); await flush();
+  const center = app.document.querySelector('#control-center');
+  center.querySelector('input').value = '/projects/space & unicode ä';
+  center.querySelector('button').click(); await flush();
+  assert.equal(center.querySelector('input').value, '/projects/space & unicode ä');
+  center.querySelector('button').click(); await flush();
+  assert.deepEqual(app.requests.filter(r => r.path.startsWith('/api/codex/hooks')).map(r => r.path),
+    ['/api/codex/hooks', '/api/codex/hooks?workspacePath=%2Fprojects%2Fspace%20%26%20unicode%20%C3%A4', '/api/codex/hooks?workspacePath=%2Fprojects%2Fspace%20%26%20unicode%20%C3%A4']);
+});
+
+test('hooks failure exposes an error with a working read-only retry', async t => {
+  let attempts = 0;
+  const app = await setup(t, undefined, { readHooks: () => ++attempts === 1
+    ? { ok: false, json: async () => ({ title: 'hooks/list unavailable' }) } : hooksResponse() });
+  app.document.querySelector('[data-view=hooks]').click(); await flush();
+  const center = app.document.querySelector('#control-center');
+  assert.match(center.querySelector('[role=alert]').textContent, /hooks\/list unavailable/);
+  assert.doesNotMatch(center.textContent, /keine Hooks gemeldet|Hooks werden geladen/);
+  assert.equal(center.querySelector('button').textContent, 'Erneut versuchen');
+  center.querySelector('button').click(); await flush();
+  assert.match(center.textContent, /Vertrauen: Nicht vertraut/);
+  assert.equal(center.querySelector('[role=alert]'), null);
+});
+
+for (const outcome of ['success', 'failure']) {
+  test(`hooks view ignores older ${outcome} after refresh`, async t => {
+    const older = Promise.withResolvers(); let attempts = 0;
+    const app = await setup(t, undefined, { readHooks: () => ++attempts === 1 ? older.promise : hooksResponse() });
+    app.document.querySelector('[data-view=hooks]').click();
+    const center = app.document.querySelector('#control-center');
+    center.querySelector('button').click(); await flush();
+    const current = center.innerHTML;
+    if (outcome === 'success') older.resolve(hooksResponse([hook({ trustStatus: 'trusted' })]));
+    else older.reject(new Error('Old hooks failure'));
+    await flush(); assert.equal(center.innerHTML, current);
+  });
+}
+
+test('hooks completion after navigation cannot replace the active view', async t => {
+  const pending = Promise.withResolvers();
+  const app = await setup(t, undefined, { readHooks: () => pending.promise });
+  app.document.querySelector('[data-view=hooks]').click();
+  app.document.querySelector('[data-view=work]').click(); await flush();
+  pending.resolve(hooksResponse()); await flush();
+  assert.ok(app.document.querySelector('#control-center .work-board'));
+  assert.equal(app.document.querySelector('#control-center .hook-card'), null);
+});
+const mcpServer = (overrides = {}) => ({ name: 'local-tools', runtimeStatus: null, authStatus: 'unsupported', toolCount: 2, toolsError: null, httpOrigin: null, pluginId: null, ...overrides });
+const mcpResponse = (servers = [mcpServer()], nextCursor = null) => ({ ok: true, json: async () => ({ servers, nextCursor }) });
+const buttonText = (element, text) => [...element.querySelectorAll('button')].find(button => button.textContent === text);
+
+
+test('MCP view keeps unknown runtime separate from auth, tool availability, and failures', async t => {
+  const app = await setup(t, undefined, { readMcp: () => mcpResponse([
+    mcpServer(), mcpServer({ name: 'connected', runtimeStatus: 'connected', toolCount: 0 }),
+    mcpServer({ name: 'broken', runtimeStatus: 'failed', toolCount: null, toolsError: 'Discovery rejected' }),
+    mcpServer({ name: 'login', runtimeStatus: 'authenticationRequired', authStatus: 'notLoggedIn' }),
+    mcpServer({ name: 'future', runtimeStatus: 'newState', authStatus: 'newAuth' })
+  ]) });
+  app.document.querySelector('[data-view=mcp]').click();
+  await flush();
+  const cards = [...app.document.querySelectorAll('.mcp-card')];
+  assert.equal(cards.length, 5);
+  assert.match(cards[0].textContent, /Unbekannt · kein Laufzeitstatus gemeldet/);
+  assert.equal(cards[0].querySelector('.queued'), null);
+  assert.match(cards[0].textContent, /Authentifizierung: Nicht unterstützt/);
+  assert.match(cards[0].textContent, /2 Werkzeuge im gemeldeten Katalog/);
+  assert.equal(cards[1].querySelector('.queued').textContent, 'Verbunden');
+  assert.match(cards[1].textContent, /0 Werkzeuge/);
+  assert.match(cards[2].textContent, /Fehlgeschlagen/);
+  assert.match(cards[2].textContent, /Werkzeugliste nicht verfügbar: Discovery rejected/);
+  assert.doesNotMatch(cards[2].textContent, /0 Werkzeuge/);
+  assert.match(cards[3].textContent, /Anmeldung erforderlich/);
+  assert.match(cards[3].textContent, /Nicht angemeldet/);
+  assert.match(cards[4].textContent, /Unbekannter Status: newState/);
+  assert.match(cards[4].textContent, /Authentifizierung: newAuth/);
+});
+
+test('MCP view scopes the read to the selected native thread and refresh preserves that scope', async t => {
+  const app = await setup(t);
+  app.document.querySelector('[data-view=mcp]').click();
+  await flush();
+  const scope = app.document.querySelector('#mcp-thread');
+  assert.equal(scope.options.length, 3);
+  scope.value = threadB.id;
+  scope.dispatchEvent(new app.window.Event('change'));
+  await flush();
+  buttonText(app.document.querySelector('#control-center'), 'Aktualisieren').click();
+  await flush();
+  assert.deepEqual(app.requests.filter(r => r.path.startsWith('/api/codex/mcp-servers?')).map(r => r.path), [
+    '/api/codex/mcp-servers?', '/api/codex/mcp-servers?threadId=' + threadB.id, '/api/codex/mcp-servers?threadId=' + threadB.id
+  ]);
+  assert.equal(app.requests.filter(r => r.method && r.method !== 'GET').length, 0);
+});
+
+test('MCP pagination preserves opaque cursors and existing cards across a failed next page', async t => {
+  const cursor = 'next &=?/ü';
+  let reads = 0;
+  const app = await setup(t, undefined, { readMcp: () => ++reads === 1 ? mcpResponse([mcpServer()], cursor)
+    : reads === 2 ? { ok: false, json: async () => ({ title: 'Next page failed' }) }
+    : mcpResponse([mcpServer({ name: 'second', runtimeStatus: 'disabled' })]) });
+  app.document.querySelector('[data-view=mcp]').click();
+  await flush();
+  const center = app.document.querySelector('#control-center');
+  buttonText(center, 'Weitere Server laden').click();
+  await flush();
+  assert.equal(center.querySelectorAll('.mcp-card').length, 1);
+  assert.match(center.querySelector('[role=alert]:not([hidden])').textContent, /Next page failed/);
+  buttonText(center, 'Weitere Server laden').click();
+  await flush();
+  assert.deepEqual([...center.querySelectorAll('.mcp-card h2')].map(n => n.textContent), ['local-tools', 'second']);
+  assert.equal(buttonText(center, 'Weitere Server laden').hidden, true);
+  assert.equal(center.querySelector('[role=alert]:not([hidden])'), null);
+  const paths = app.requests.filter(r => r.path.startsWith('/api/codex/mcp-servers?')).map(r => r.path);
+  assert.equal(paths.length, 3);
+  assert.equal(new URL(paths[1], 'http://localhost').searchParams.get('cursor'), cursor);
+  assert.equal(paths[1], paths[2]);
+});
+
+test('MCP method unavailable is an error with retry, while an empty result is a distinct state', async t => {
+  let reads = 0;
+  const app = await setup(t, undefined, { readMcp: () => ++reads === 1
+    ? { ok: false, json: async () => ({ title: 'Diese Codex-Version stellt MCP-Verbindungsstatus nicht bereit.' }) }
+    : mcpResponse([]) });
+  app.document.querySelector('[data-view=mcp]').click();
+  await flush();
+  const center = app.document.querySelector('#control-center');
+  assert.match(center.querySelector('[role=alert]:not([hidden])').textContent, /nicht bereit/);
+  assert.doesNotMatch(center.textContent, /werden geladen|keine MCP-Server/);
+  buttonText(center, 'Erneut versuchen').click();
+  await flush();
+  assert.match(center.textContent, /Codex meldet in dieser Auswahl keine MCP-Server/);
+  assert.equal(center.querySelector('[role=alert]:not([hidden])'), null);
+  assert.equal(reads, 2);
+});
+
+for (const outcome of ['success', 'failure']) {
+  test(`MCP view ignores stale ${outcome} after refresh`, async t => {
+    const older = Promise.withResolvers();
+    let reads = 0;
+    const app = await setup(t, undefined, { readMcp: () => ++reads === 1 ? older.promise : mcpResponse([mcpServer({ name: 'fresh' })]) });
+    app.document.querySelector('[data-view=mcp]').click();
+    const center = app.document.querySelector('#control-center');
+    buttonText(center, 'Aktualisieren').click();
+    await flush();
+    assert.equal(center.querySelector('.mcp-card h2').textContent, 'fresh');
+    const fresh = center.innerHTML;
+    if (outcome === 'success') older.resolve(mcpResponse([mcpServer({ name: 'obsolete' })]));
+    else older.reject(new Error('Obsolete error'));
+    await flush();
+    assert.equal(center.innerHTML, fresh);
+  });
+}
+
+test('MCP completion after leaving and reentering the view cannot replace the newer view', async t => {
+  const older = Promise.withResolvers();
+  let reads = 0;
+  const app = await setup(t, undefined, { readMcp: () => ++reads === 1 ? older.promise : mcpResponse([mcpServer({ name: 'new mount' })]) });
+  app.document.querySelector('[data-view=mcp]').click();
+  app.document.querySelector('[data-view=work]').click();
+  await flush();
+  const center = app.document.querySelector('#control-center');
+  assert.ok(center.querySelector('.work-board'));
+  app.document.querySelector('[data-view=mcp]').click();
+  await flush();
+  older.resolve(mcpResponse([mcpServer({ name: 'obsolete mount' })]));
+  await flush();
+  assert.equal(center.querySelector('.mcp-card h2').textContent, 'new mount');
+});
+
+test('MCP server fields and discovery errors are rendered as text', async t => {
+  const attack = '<img src=x onerror=alert(1)>';
+  const app = await setup(t, undefined, { readMcp: () => mcpResponse([mcpServer({ name: attack, runtimeStatus: attack,
+    authStatus: attack, toolsError: attack, toolCount: null, httpOrigin: attack, pluginId: attack })]) });
+  app.document.querySelector('[data-view=mcp]').click();
+  await flush();
+  const card = app.document.querySelector('.mcp-card');
+  assert.equal(card.querySelector('h2').textContent, attack);
+  assert.equal(card.querySelectorAll('img').length, 0);
+  for (const prefix of ['Unbekannter Status: ', 'Authentifizierung: ', 'Werkzeugliste nicht verfügbar: ', 'HTTP-Ursprung: ', 'Plugin: '])
+    assert.ok(card.textContent.includes(prefix + attack));
+});
+
+test('MCP thread picker loads later native thread pages', async t => {
+  let reads = 0;
+  const app = await setup(t, undefined, { readThreads: () => ({ ok: true, json: async () => ++reads === 1
+    ? { threads: [threadA], nextCursor: 'older threads' } : { threads: [threadB], nextCursor: null } }) });
+  app.document.querySelector('[data-view=mcp]').click();
+  await flush();
+  const center = app.document.querySelector('#control-center');
+  assert.equal(center.querySelector('#mcp-thread').options.length, 2);
+  buttonText(center, 'Weitere Threads laden').click();
+  await flush();
+  assert.equal(center.querySelector('#mcp-thread').options.length, 3);
+  assert.equal(buttonText(center, 'Weitere Threads laden').hidden, true);
+  assert.equal(app.requests.filter(r => r.path.startsWith('/api/codex/threads?')).at(-1).path, '/api/codex/threads?cursor=older+threads');
+});
 
 test('usage view reads and refreshes the remaining allowance', async t => {
   const app = await setup(t);
@@ -110,7 +369,93 @@ test('usage display explains periods and rounds credits while preserving the rep
   assert.doesNotMatch(credits.textContent, /1234\.5678901234|€|\$|Token/);
 });
 
-async function setup(t, questions = [initialQuestion()], { readUsage = () => usageResponse() } = {}) {
+test('daily token activity preserves exact counters and reported dates separately from allowance', async t => {
+  const app = await setup(t);
+  app.document.querySelector('[data-view=usage]').click();
+  await flush();
+  const section = app.document.querySelector('.token-activity');
+  const facts = [...section.querySelectorAll('.token-summary dd')].map(n => n.textContent);
+  assert.deepEqual(facts, [BigInt('9007199254740993').toLocaleString('de-AT'), '12\u00a0345', '3\u00a0600 Sekunden', '0 Tage', '5 Tage']);
+  const rows = [...section.querySelectorAll('tbody tr')];
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map(row => row.querySelector('time').dateTime), ['2026-10-29', '2026-10-28']);
+  assert.deepEqual(rows.map(row => row.querySelector('time').textContent), ['29.10.2026', '28.10.2026']);
+  assert.deepEqual(rows.map(row => row.querySelector('.token-count').textContent), ['0', '12\u00a0345']);
+  assert.deepEqual(rows.map(row => row.querySelector('.token-bar').style.width), ['0%', '100%']);
+  assert.equal(section.querySelector('caption').textContent, '2 von Codex gemeldete Tage · neueste zuerst');
+  assert.doesNotMatch(section.textContent, /75 % verbleibend|Credits:/);
+  assert.equal(app.requests.filter(r => r.path === '/api/codex/token-activity').length, 1);
+  app.document.querySelector('#control-center > button').click();
+  await flush();
+  assert.equal(app.requests.filter(r => r.path === '/api/codex/token-activity').length, 2);
+});
+
+for (const state of ['unavailable', 'empty']) {
+  test(`daily token activity distinguishes ${state} measurements from reported zero`, async t => {
+    const data = tokenActivity({ summary: { lifetimeTokens: null, peakDailyTokens: null,
+      longestRunningTurnSec: null, currentStreakDays: '0', longestStreakDays: null },
+      dailyUsageBuckets: state === 'unavailable' ? null : [] });
+    const app = await setup(t, undefined, { readTokenActivity: () => tokenResponse(data) });
+    app.document.querySelector('[data-view=usage]').click(); await flush();
+    const section = app.document.querySelector('.token-activity');
+    assert.deepEqual([...section.querySelectorAll('dd')].map(n => n.textContent),
+      ['Nicht verfügbar', 'Nicht verfügbar', 'Nicht verfügbar', '0 Tage', 'Nicht verfügbar']);
+    assert.match(section.textContent, state === 'unavailable' ? /Tägliche Token-Daten sind nicht verfügbar/ : /Keine Tage mit Token-Aktivität gemeldet/);
+    assert.equal(section.querySelector('table'), null);
+  });
+}
+
+test('token activity loads when the independent allowance read fails', async t => {
+  const app = await setup(t, undefined, { readUsage: () => ({ ok: false, json: async () => ({ title: 'Allowance offline' }) }) });
+  app.document.querySelector('[data-view=usage]').click(); await flush();
+  assert.match(app.document.querySelector('#control-center > div [role=alert]').textContent, /Allowance offline/);
+  assert.ok(app.document.querySelector('.token-activity table'));
+  assert.equal(app.document.querySelector('.token-activity [role=alert]'), null);
+});
+
+test('token activity failure has an independent retry while allowance remains visible', async t => {
+  let attempts = 0;
+  const app = await setup(t, undefined, { readTokenActivity: () => ++attempts === 1
+    ? { ok: false, json: async () => ({ title: 'Token data offline' }) } : tokenResponse() });
+  app.document.querySelector('[data-view=usage]').click(); await flush();
+  const section = app.document.querySelector('.token-activity');
+  assert.match(section.querySelector('[role=alert]').textContent, /Token data offline/);
+  assert.doesNotMatch(section.textContent, /wird geladen/);
+  assert.match(app.document.querySelector('#control-center').textContent, /75 % verbleibend/);
+  section.querySelector('button').click(); await flush();
+  assert.ok(section.querySelector('table'));
+  assert.equal(section.querySelector('[role=alert]'), null);
+  assert.equal(app.requests.filter(r => r.path === '/api/codex/token-activity').length, 2);
+  assert.equal(app.requests.filter(r => r.path === '/api/codex/usage').length, 1);
+});
+
+for (const outcome of ['success', 'failure']) {
+  test(`daily token activity ignores an older ${outcome} after refresh`, async t => {
+    const old = Promise.withResolvers(); let attempts = 0;
+    const app = await setup(t, undefined, { readTokenActivity: () => ++attempts === 1 ? old.promise : tokenResponse() });
+    app.document.querySelector('[data-view=usage]').click();
+    app.document.querySelector('#control-center > button').click(); await flush();
+    const section = app.document.querySelector('.token-activity'); const current = section.innerHTML;
+    if (outcome === 'success') old.resolve(tokenResponse(tokenActivity({ dailyUsageBuckets: null })));
+    else old.reject(new Error('Obsolete activity failure'));
+    await flush();
+    assert.equal(app.document.querySelector('.token-activity'), section);
+    assert.equal(section.innerHTML, current);
+    assert.equal(app.document.querySelector('#error').hidden, true);
+  });
+}
+
+test('daily token activity completion after navigation does not replace the current view', async t => {
+  const old = Promise.withResolvers();
+  const app = await setup(t, undefined, { readTokenActivity: () => old.promise });
+  app.document.querySelector('[data-view=usage]').click();
+  app.document.querySelector('[data-view=work]').click(); await flush();
+  old.resolve(tokenResponse()); await flush();
+  assert.ok(app.document.querySelector('.work-board'));
+  assert.equal(app.document.querySelector('.token-activity'), null);
+});
+
+async function setup(t, questions = [initialQuestion()], { readUsage = () => usageResponse(), readTokenActivity = () => tokenResponse(), readHooks = () => hooksResponse(), readMcp = () => mcpResponse(), readThreads = () => ({ ok: true, json: async () => ({ threads: [threadA, threadB], nextCursor: null }) }) } = {}) {
   let snapshot = { revision: 1, questions };
   let stream;
   const requests = [];
@@ -131,8 +476,8 @@ async function setup(t, questions = [initialQuestion()], { readUsage = () => usa
     const method = options.method ?? 'GET';
     const supported = method === 'GET' && (
       path.startsWith('/api/questions/?') || path === '/api/questions/' ||
-      (path.startsWith('/api/codex/threads?') || /^\/api\/codex\/threads\/[^/]+$/.test(path)) || path === '/api/codex/dispatch' || path === '/api/codex/usage' ||
-      path.startsWith('/api/work-items/')) ||
+      (path.startsWith('/api/codex/threads?') || /^\/api\/codex\/threads\/[^/]+$/.test(path)) || path === '/api/codex/dispatch' || path === '/api/codex/usage' || path === '/api/codex/token-activity' || path.startsWith('/api/codex/mcp-servers?') ||
+      path.startsWith('/api/work-items/') || path.startsWith('/api/codex/hooks')) ||
       method === 'POST' && (path === '/api/questions/' ||
         /^\/api\/questions\/[^/]+\/answer$/.test(path) ||
         path === '/api/codex/dispatch' || path === '/api/work-items/');
@@ -142,7 +487,10 @@ async function setup(t, questions = [initialQuestion()], { readUsage = () => usa
     }
     requests.push({ path, ...options });
     if (path === '/api/codex/usage') return readUsage();
-    if (path.startsWith('/api/codex/threads?')) return { ok: true, json: async () => ({ threads: [threadA, threadB], nextCursor: null }) };
+    if (path.startsWith('/api/codex/hooks')) return readHooks();
+    if (path === '/api/codex/token-activity') return readTokenActivity();
+    if (path.startsWith('/api/codex/mcp-servers?')) return readMcp(path);
+    if (path.startsWith('/api/codex/threads?')) return readThreads(path);
     if (path.startsWith('/api/codex/threads/')) return { ok: true, json: async () => ({ thread: threadA, goal: 'Keep data', goalStatus: 'active', latestReply: 'The original reply.', latestTurnStatus: 'completed' }) };
     if (path === '/api/codex/dispatch') {
       if (options.method === 'POST') {

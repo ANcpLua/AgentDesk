@@ -13,6 +13,18 @@ namespace AgentDesk.Mcp;
 public sealed class WorkspaceTools(ICodexClient codex, IWorkspaceService workspace)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    [McpServerTool(Name = "list_codex_hooks", ReadOnly = true, OpenWorld = false)]
+    [Description("Read configured Codex hooks and their native enabled, managed and trust status, with source paths and load diagnostics. Optional workspacePath must be absolute; omitted uses Codex's current working directory. Does not run hooks, grant trust or change approvals.")]
+    public Task<CallToolResult> Hooks(string? workspacePath = null, CancellationToken cancellationToken = default) =>
+        Result(async () => await codex.HooksAsync(workspacePath, cancellationToken));
+    [McpServerTool(Name = "read_codex_token_activity", ReadOnly = true, OpenWorld = false)]
+    [Description("Read account-wide daily token activity and summary from Codex. Counters are exact decimal strings. Null means unavailable; an empty daily list means no reported days. Separate from remaining account allowance; does not resume an agent.")]
+    public Task<CallToolResult> TokenActivity(CancellationToken cancellationToken = default) =>
+        Result(async () => await codex.TokenActivityAsync(cancellationToken));
+    [McpServerTool(Name = "list_codex_mcp_servers", ReadOnly = true, OpenWorld = false)]
+    [Description("Read a bounded page of Codex MCP servers: runtime connection state, authentication, tool count and discovery errors. Supply threadId for that thread's runtime; null status is unknown, not healthy. Follow nextCursor for more servers. Does not reconnect, log in, or modify configuration.")]
+    public Task<CallToolResult> McpServers(string? threadId = null, string? serverName = null, string? cursor = null, CancellationToken cancellationToken = default) =>
+        Result(async () => await codex.McpServersAsync(threadId, serverName, cursor, cancellationToken));
     [McpServerTool(Name = "read_codex_usage", ReadOnly = true, OpenWorld = false)]
     [Description("Read current account-wide Codex usage and reset times. Unavailable fields are not zero.")]
     public Task<CallToolResult> Usage(CancellationToken cancellationToken = default) =>

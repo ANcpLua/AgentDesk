@@ -11,6 +11,7 @@ import tempfile
 import time
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 import sqlite3
@@ -86,7 +87,7 @@ class InboxAcceptanceTests(unittest.TestCase):
                 raw = error.read()
                 return error.code, json.loads(raw) if raw and 'json' in error.headers.get('Content-Type', '') else raw
 
-    def codex_usage_tool(self):
+    def codex_usage_tool(self, tool_name='read_codex_usage', arguments=None):
         process = subprocess.Popen(['dotnet', str(DLL), '--mcp-stdio'], env=self.env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log, text=True, bufsize=1)
         self.addCleanup(self.stop_process, process)
@@ -110,11 +111,14 @@ class InboxAcceptanceTests(unittest.TestCase):
                 'clientInfo': {'name': 'usage-acceptance', 'version': '1.0'}})
             process.stdin.write(json.dumps({'jsonrpc': '2.0', 'method': 'notifications/initialized'}) + '\n')
             process.stdin.flush()
-            return rpc(2, 'tools/call', {'name': 'read_codex_usage', 'arguments': {}})
+            return rpc(2, 'tools/call', {'name': tool_name, 'arguments': arguments or {}})
         finally:
             self.stop_process(process)
             process.stdin.close()
             process.stdout.close()
+
+    def codex_tool(self, name, arguments=None):
+        return self.codex_usage_tool(name, arguments)
 
     def create(self, **overrides):
         body = {'prompt': 'Welchen Entwurf soll ich verwenden?', 'choices': [{'label': 'A'}, {'label': 'B'}],
@@ -310,6 +314,160 @@ class InboxAcceptanceTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertIn(b'question-inbox', response.read())
 
+    def test_token_activity_reads_account_wide_counters_exactly_through_http_and_mcp(self):
+        native = self.codex.response('account/usage/read', {})
+        native['summary']['lifetimeTokens'] = 9223372036854775807
+        native['dailyUsageBuckets'][0]['tokens'] = 9007199254740993
+        native['threadUsage'] = {'ignored': 'account reads omit threadId'}
+        expected = {'summary': {key: str(value) for key, value in native['summary'].items()},
+            'dailyUsageBuckets': [{**day, 'tokens': str(day['tokens'])} for day in native['dailyUsageBuckets']]}
+        self.codex.token_activity_replies = [{'result': native}, {'result': native}]
+        self.assertEqual(self.request('GET', '/api/codex/token-activity'), (200, expected))
+        result = self.codex_usage_tool('read_codex_token_activity')
+        self.assertFalse(result.get('isError', False), result)
+        self.assertEqual(result['structuredContent'], expected)
+        self.assertEqual(json.loads(result['content'][0]['text']), expected)
+        self.assertEqual([call['params'] for call in self.codex.token_activity_requests], [{}, {}])
+        self.assertEqual(self.codex.usage_requests, [])
+        self.assertEqual(self.codex.queued(), [])
+
+    def test_token_activity_preserves_unavailable_and_empty_daily_measurements(self):
+        for case in ('unavailable', 'empty', 'omitted'):
+            with self.subTest(case=case):
+                expected = {'summary': dict.fromkeys(('lifetimeTokens', 'peakDailyTokens',
+                    'longestRunningTurnSec', 'currentStreakDays', 'longestStreakDays')),
+                    'dailyUsageBuckets': [] if case == 'empty' else None}
+                native = {'summary': {}} if case == 'omitted' else expected
+                self.codex.token_activity_replies = [{'result': native}, {'result': native}]
+                self.assertEqual(self.request('GET', '/api/codex/token-activity'), (200, expected))
+                result = self.codex_usage_tool('read_codex_token_activity')
+                self.assertFalse(result.get('isError', False), result)
+                self.assertEqual(result['structuredContent'], expected)
+        self.assertEqual(self.codex.queued(), [])
+
+    def test_token_activity_error_retries_read_without_allowance_or_agent_calls(self):
+        for transport in ('http', 'mcp'):
+            with self.subTest(transport=transport):
+                self.codex.token_activity_replies = [{'error': {'code': -32601,
+                    'message': 'Token activity is unavailable in this server'}}]
+                start = len(self.codex.token_activity_requests)
+                if transport == 'http':
+                    status, problem = self.request('GET', '/api/codex/token-activity')
+                    self.assertEqual((status, problem['status'], problem['title']),
+                        (503, 503, 'Token activity is unavailable in this server'))
+                    self.assertEqual(self.request('GET', '/api/codex/token-activity')[0], 200)
+                else:
+                    result = self.codex_usage_tool('read_codex_token_activity')
+                    self.assertTrue(result['isError'], result)
+                    self.assertEqual(result['content'][0]['text'], 'Token activity is unavailable in this server')
+                    self.assertIsNone(result.get('structuredContent'))
+                    retried = self.codex_usage_tool('read_codex_token_activity')
+                    self.assertFalse(retried.get('isError', False), retried)
+                    self.assertEqual(retried['structuredContent']['summary']['lifetimeTokens'], '123456')
+                calls = self.codex.token_activity_requests[start:]
+                self.assertEqual(len(calls), 2)
+                self.assertNotEqual(calls[0]['connection'], calls[1]['connection'])
+                self.assertEqual([call['params'] for call in calls], [{}, {}])
+        self.assertEqual(self.codex.usage_requests, [])
+        self.assertEqual(self.codex.queued(), [])
+
+    def test_token_activity_rejects_malformed_native_measurements(self):
+        valid = self.codex.response('account/usage/read', {})
+        cases = (
+            ('missing_summary', {'dailyUsageBuckets': []}),
+            ('null_summary', {'summary': None, 'dailyUsageBuckets': None}),
+            ('fractional_counter', {**valid, 'summary': {**valid['summary'], 'peakDailyTokens': 1.5}}),
+            ('negative_counter', {**valid, 'summary': {**valid['summary'], 'lifetimeTokens': -1}}),
+            ('overflow_counter', {**valid, 'summary': {**valid['summary'], 'lifetimeTokens': 9223372036854775808}}),
+            ('null_day', {**valid, 'dailyUsageBuckets': [None]}),
+            ('missing_day_count', {**valid, 'dailyUsageBuckets': [{'startDate': '2026-10-28'}]}),
+            ('null_day_count', {**valid, 'dailyUsageBuckets': [{'startDate': '2026-10-28', 'tokens': None}]}),
+            ('negative_day_count', {**valid, 'dailyUsageBuckets': [{'startDate': '2026-10-28', 'tokens': -1}]}),
+            ('blank_date', {**valid, 'dailyUsageBuckets': [{'startDate': ' ', 'tokens': 0}]}))
+        for name, native in cases:
+            with self.subTest(case=name):
+                self.codex.token_activity_replies = [{'result': native}, {'result': native}]
+                status, problem = self.request('GET', '/api/codex/token-activity')
+                self.assertEqual((status, problem['status']), (503, 503), problem)
+                result = self.codex_usage_tool('read_codex_token_activity')
+                self.assertTrue(result['isError'], result)
+                self.assertEqual(result['content'][0]['text'], problem['title'])
+                self.assertIsNone(result.get('structuredContent'))
+        self.assertEqual(self.codex.queued(), [])
+
+    def test_codex_mcp_health_projects_runtime_auth_and_tool_errors(self):
+        states = [None, 'notStarted', 'starting', 'connected', 'authenticationRequired', 'failed',
+                  'cancelled', 'disabled', 'futureState']
+        native = {'data': [{'name': f'server-{i}', 'authStatus': 'oAuth', 'runtimeStatus': state,
+            'tools': {}, 'toolsError': 'Catalog denied' if state == 'failed' else None,
+            'httpOrigin': 'https://tools.example', 'pluginId': 'tools@example',
+            'resources': [], 'resourceTemplates': []} for i, state in enumerate(states)], 'nextCursor': None}
+        self.codex.mcp_replies = [{'result': native}, {'result': native}]
+        status, page = self.request('GET', '/api/codex/mcp-servers?threadId=' + THREAD_A)
+        self.assertEqual(status, 200, page)
+        self.assertEqual([s['runtimeStatus'] for s in page['servers']], states)
+        self.assertEqual([s['authStatus'] for s in page['servers']], ['oAuth'] * len(states))
+        self.assertEqual([s['toolCount'] for s in page['servers']], [None if s == 'failed' else 0 for s in states])
+        self.assertEqual(page['servers'][5]['toolsError'], 'Catalog denied')
+        self.assertEqual(page['servers'][0]['httpOrigin'], 'https://tools.example')
+        self.assertEqual(page['servers'][0]['pluginId'], 'tools@example')
+        result = self.codex_tool('list_codex_mcp_servers', {'threadId': THREAD_A})
+        self.assertFalse(result.get('isError', False), result)
+        self.assertEqual(result['structuredContent'], page)
+        self.assertEqual(self.codex.queued(), [])
+
+    def test_codex_mcp_health_preserves_scope_pagination_and_optional_status(self):
+        opaque = 'next &=?/ü'
+        native = {'data': [{'name': 'first', 'authStatus': 'futureAuth', 'tools': {'read': {}},
+            'resources': [], 'resourceTemplates': []}], 'nextCursor': opaque}
+        self.codex.mcp_replies = [{'result': native}, {'result': {'data': [], 'nextCursor': None}}]
+        status, first = self.request('GET', '/api/codex/mcp-servers')
+        self.assertEqual(status, 200, first)
+        self.assertEqual(first['nextCursor'], opaque)
+        self.assertIsNone(first['servers'][0]['runtimeStatus'])
+        self.assertEqual(first['servers'][0]['authStatus'], 'futureAuth')
+        self.assertEqual(first['servers'][0]['toolCount'], 1)
+        result = self.codex_tool('list_codex_mcp_servers', {'threadId': THREAD_B, 'serverName': 'name &/?ü', 'cursor': opaque})
+        self.assertFalse(result.get('isError', False), result)
+        self.assertEqual(result['structuredContent'], {'servers': [], 'nextCursor': None})
+        self.assertEqual([r['params'] for r in self.codex.mcp_requests], [
+            {'threadId': None, 'serverName': None, 'cursor': None, 'limit': 50, 'detail': 'toolsAndAuthOnly'},
+            {'threadId': THREAD_B, 'serverName': 'name &/?ü', 'cursor': opaque, 'limit': 50, 'detail': 'toolsAndAuthOnly'}])
+        self.assertNotEqual(self.codex.mcp_requests[0]['connection'], self.codex.mcp_requests[1]['connection'])
+
+    def test_codex_mcp_health_only_method_not_found_means_unsupported(self):
+        for code, expected in [(-32601, 501), (-32602, 503), (-32000, 503)]:
+            with self.subTest(code=code):
+                self.codex.mcp_replies = [{'error': {'code': code, 'message': 'Native request rejected'}},
+                                         {'error': {'code': code, 'message': 'Native request rejected'}}]
+                status, problem = self.request('GET', '/api/codex/mcp-servers')
+                self.assertEqual(status, expected, problem)
+                self.assertEqual(problem['status'], expected)
+                result = self.codex_tool('list_codex_mcp_servers')
+                self.assertTrue(result['isError'], result)
+                message = result['content'][0]['text']
+                self.assertIn('nicht bereit' if code == -32601 else 'Native request rejected', message)
+        self.assertEqual(self.request('GET', '/api/codex/mcp-servers')[0], 200)
+
+    def test_codex_mcp_health_rejects_invalid_thread_before_native_request(self):
+        status, problem = self.request('GET', '/api/codex/mcp-servers?threadId=not-a-thread')
+        self.assertEqual((status, problem['status']), (400, 400))
+        self.assertEqual(self.codex.mcp_requests, [])
+
+    def test_codex_mcp_health_rejects_malformed_or_missing_required_data(self):
+        for data in ({}, {'data': None}, {'data': [None]}, {'data': [{}]},
+                     {'data': [{'name': 'x', 'authStatus': 'unknown', 'tools': None}]},
+                     {'data': [{'name': '', 'authStatus': 'unknown', 'tools': {}}]},
+                     {'data': [{'name': 'x', 'authStatus': None, 'tools': {}}]},
+                     {'data': 'not-an-array'}):
+            with self.subTest(data=data):
+                self.codex.mcp_replies = [{'result': data}, {'result': data}]
+                status, problem = self.request('GET', '/api/codex/mcp-servers')
+                self.assertEqual((status, problem['status']), (503, 503))
+                result = self.codex_tool('list_codex_mcp_servers')
+                self.assertTrue(result['isError'], result)
+                self.assertIn('lesbar', result['content'][0]['text'])
+
     def test_codex_usage_reads_current_snapshot_from_native_server(self):
         status, usage = self.request('GET', '/api/codex/usage')
         self.assertEqual(status, 200, usage)
@@ -319,6 +477,84 @@ class InboxAcceptanceTests(unittest.TestCase):
         self.assertIsNone(usage['rateLimitsByLimitId'])
         self.assertIsNone(usage['rateLimits']['secondary'])
         self.assertEqual(usage['rateLimits']['credits']['balance'], '12.5')
+
+    def test_codex_hooks_preserve_handlers_trust_and_diagnostics_through_http_and_mcp(self):
+        workspace = '/projects/demo space & ä'
+        expected = self.codex.response('hooks/list', {'cwds': [workspace]})
+        hook = expected['data'][0]['hooks'][0]
+        variants = [hook,
+            {**hook, 'key': 'mcp', 'handlerType': 'mcpTool', 'command': None, 'async': None,
+             'server': 'policy', 'tool': 'review', 'trustStatus': 'managed', 'isManaged': True, 'pluginId': 'policy@company'},
+            {**hook, 'key': 'prompt', 'handlerType': 'prompt', 'command': None, 'async': None,
+             'trustStatus': 'trusted', 'enabled': False, 'matcher': None, 'additionalContextLimit': 0},
+            {**hook, 'key': 'agent', 'handlerType': 'agent', 'command': None, 'async': None, 'trustStatus': 'modified'},
+            {**hook, 'key': 'future', 'handlerType': 'futureHandler', 'eventName': 'futureEvent',
+             'command': None, 'async': None, 'source': 'futureSource', 'trustStatus': 'futureTrust'}]
+        expected['data'][0].update(hooks=variants, warnings=['Duplicate matcher'],
+            errors=[{'path': '/project/broken-hooks.json', 'message': 'Invalid hook'}])
+        self.codex.hooks_replies = [{'result': expected}, {'result': expected}]
+        self.assertEqual(self.request('GET', '/api/codex/hooks?workspacePath=' + urllib.parse.quote(workspace)), (200, expected))
+        result = self.codex_usage_tool('list_codex_hooks', {'workspacePath': workspace})
+        self.assertFalse(result.get('isError', False), result)
+        self.assertEqual(result['structuredContent'], expected)
+        self.assertEqual(json.loads(result['content'][0]['text']), expected)
+        self.assertEqual([request['params'] for request in self.codex.hooks_requests], [{'cwds': [workspace]}] * 2)
+        self.assertEqual(set(self.codex.native_requests), {'initialize', 'hooks/list'})
+        self.assertEqual(self.codex.queued(), [])
+
+    def test_codex_hooks_default_cwd_and_empty_snapshots_are_explicit(self):
+        expected = self.codex.response('hooks/list', {})
+        self.assertEqual(self.request('GET', '/api/codex/hooks'), (200, expected))
+        self.assertEqual(self.codex.hooks_requests[-1]['params'], {'cwds': []})
+        for empty in ({'data': []}, {'data': [{'cwd': WORKSPACE, 'hooks': [], 'warnings': [], 'errors': []}]}):
+            with self.subTest(snapshot=empty):
+                self.codex.hooks_replies = [{'result': empty}, {'result': empty}]
+                self.assertEqual(self.request('GET', '/api/codex/hooks'), (200, empty))
+                self.assertEqual(self.codex_usage_tool('list_codex_hooks')['structuredContent'], empty)
+
+    def test_codex_hooks_reject_relative_paths_without_native_calls(self):
+        for invalid in ('relative/project', '   '):
+            with self.subTest(path=invalid):
+                status, problem = self.request('GET', '/api/codex/hooks?workspacePath=' + urllib.parse.quote(invalid))
+                self.assertEqual(status, 400, problem)
+                result = self.codex_usage_tool('list_codex_hooks', {'workspacePath': invalid})
+                self.assertTrue(result['isError'], result)
+                self.assertIn('absoluter Projektpfad', result['content'][0]['text'])
+        self.assertEqual(self.codex.hooks_requests, [])
+
+    def test_codex_hooks_native_error_is_not_an_empty_inventory_and_retry_reconnects(self):
+        self.codex.hooks_replies = [{'error': {'code': -32601, 'message': 'hooks/list unavailable'}}]
+        status, problem = self.request('GET', '/api/codex/hooks')
+        self.assertEqual((status, problem['title']), (503, 'hooks/list unavailable'))
+        self.assertNotIn('data', problem)
+        self.assertEqual(self.request('GET', '/api/codex/hooks')[0], 200)
+        self.assertNotEqual(self.codex.hooks_requests[0]['connection'], self.codex.hooks_requests[1]['connection'])
+        self.codex.hooks_replies = [{'error': {'code': -32601, 'message': 'hooks/list unavailable'}}]
+        result = self.codex_usage_tool('list_codex_hooks')
+        self.assertTrue(result['isError'], result)
+        self.assertEqual(result['content'][0]['text'], 'hooks/list unavailable')
+        self.assertIsNone(result.get('structuredContent'))
+
+    def test_codex_hooks_malformed_or_missing_trust_is_unavailable(self):
+        cases = [{'result': {}}, {'result': {'data': None}}, {'result': {'data': [None]}},
+            {'result': {'data': [{'cwd': WORKSPACE, 'hooks': [], 'warnings': None, 'errors': []}]}}]
+        for field in ('trustStatus', 'enabled', 'isManaged', 'handlerType', 'currentHash'):
+            snapshot = self.codex.response('hooks/list', {})
+            del snapshot['data'][0]['hooks'][0][field]
+            cases.append({'result': snapshot})
+        snapshot = self.codex.response('hooks/list', {})
+        snapshot['data'][0]['hooks'][0]['trustStatus'] = None
+        cases.append({'result': snapshot})
+        for reply in cases:
+            with self.subTest(reply=reply):
+                self.codex.hooks_replies = [reply, reply]
+                status, problem = self.request('GET', '/api/codex/hooks')
+                self.assertEqual(status, 503, problem)
+                self.assertIn('lesbaren', problem['title'])
+                result = self.codex_usage_tool('list_codex_hooks')
+                self.assertTrue(result['isError'], result)
+                self.assertIsNone(result.get('structuredContent'))
+        self.assertEqual(self.codex.queued(), [])
 
     def test_codex_usage_preserves_multiple_buckets_through_http_and_mcp(self):
         main = {'limitId': 'codex', 'limitName': 'General',

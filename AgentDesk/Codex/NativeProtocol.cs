@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using System.Text.Json;
 using JetBrains.Annotations;
 
 namespace AgentDesk.Codex;
@@ -20,6 +21,14 @@ internal sealed record NativeTurn(string? Id, string? Status, NativeItem[] Items
 internal sealed record NativeItem(string? Type, string? Text);
 [UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
 internal sealed record NativeStatus(string? Type, string[]? ActiveFlags);
+
+[UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
+internal sealed record NativeMcpServerPage([property: JsonRequired] NativeMcpServer[] Data, string? NextCursor);
+[UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
+internal sealed record NativeMcpServer([property: JsonRequired] string Name,
+    [property: JsonRequired] string AuthStatus, string? RuntimeStatus,
+    [property: JsonRequired] Dictionary<string, JsonElement> Tools, string? ToolsError,
+    string? HttpOrigin, string? PluginId);
 
 [UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
 internal sealed record NativeThread
