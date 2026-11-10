@@ -134,7 +134,7 @@ codex mcp add question-inbox -- /bin/sh /Users/alexandernachtmann/RiderProjects/
 
 Den Server nicht doppelt verbinden. Nach Änderungen an Tools/Schema gegebenenfalls
 MCP neu laden oder einen neuen Chat öffnen. Die Plugin-Quelle unter
-`plugins/question-inbox/` bündelt dieselbe Verbindung mit einem Workflow-Skill.
+`plugins/question-inbox/` bündelt dieselbe Verbindung.
 Sie ist bewusst an dieses lokale Repository gebunden.
 
 ## v0.3-Werkzeuge und Daten
@@ -230,7 +230,6 @@ verändert, keine ganzen Chats kopiert und keine nativen Freigaben ersetzt.
 ## Wissen für weitere Agenten
 
 - [Vereinbarte Architektur und nächste Ausbaustufe](docs/architecture-direction.md)
-- [Projekt-Skill](.agents/skills/agentdesk-integration/SKILL.md)
 - [Union-Architektur](docs/union-architecture.md)
 - [Async-Entscheidungen](docs/async-notes.md)
 - [Handoff](HANDOFF.md)

@@ -5,7 +5,7 @@ The application and test projects are `AgentDesk/AgentDesk.csproj` and
 The user-facing name is AgentDesk. Stable MCP/HTTP identifiers and the existing
 SQLite location retain `question-inbox` / `QuestionInbox` for compatibility.
 
-Start with `AGENTS.md`, the project integration skill and `README.md`.
+Start with `README.md`.
 Read `docs/architecture-direction.md` for the agreed next stage: retain the C#
 MCP/domain host and SQLite, add a React frontend and a separate DuckDB analysis
 projection. React and DuckDB are planned, not implemented. A native SwiftUI
